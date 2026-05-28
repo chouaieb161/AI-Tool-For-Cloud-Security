@@ -1,0 +1,40 @@
+# MCP & agent
+mcp>=1.0.0
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-groq>=0.2.0
+langchain-text-splitters>=0.3.0
+langchain-chroma>=0.1.0
+langchain-community>=0.3.0
+sentence-transformers>=2.2.0
+python-dotenv>=1.0.0
+langfuse>=2.0.0
+typing-extensions>=4.8.0
+
+# RAG / CIS knowledge base
+chromadb>=0.4.0
+pypdf>=4.0.0
+pymupdf>=1.24.0
+pdfplumber>=0.11.0
+rank-bm25>=0.2.2
+numpy>=1.26.0
+openai>=1.40.0
+torch>=2.1.0
+
+# GCP (read-only clients; prefer Cloud Asset Inventory)
+google-cloud-asset>=3.0.0
+google-cloud-storage>=2.14.0
+google-cloud-compute>=1.19.0
+google-cloud-iam>=2.19.0
+google-cloud-logging>=3.10.0
+google-cloud-bigquery>=3.25.0
+google-auth>=2.27.0
+
+# Backend API + persistence
+fastapi>=0.115.0
+uvicorn>=0.30.0
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# google-cloud-sdk is the gcloud CLI — install separately from cloud.google.com/sdk if needed.

@@ -1,0 +1,29 @@
+# Env + secrets
+.env
+*.env
+credentials/
+*.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# Chroma / RAG artifacts
+.chroma_cis/
+chroma_cis/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
