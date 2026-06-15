@@ -36,6 +36,12 @@ def get_chat_session_or_none(db: Session, session_id: int) -> ChatSession | None
     ).scalar_one_or_none()
 
 
+def get_chat_message_or_none(db: Session, message_id: int) -> ChatMessage | None:
+    return db.execute(
+        select(ChatMessage).where(ChatMessage.id == message_id)
+    ).scalar_one_or_none()
+
+
 def create_chat_session(db: Session, project: Project, title: str | None) -> ChatSession:
     session = ChatSession(project_id=project.id, title=title)
     db.add(session)
@@ -100,6 +106,19 @@ def message_payload(message: ChatMessage) -> dict[str, Any]:
     }
 
 
+def update_chat_message(db: Session, message: ChatMessage, *, content: str) -> ChatMessage:
+    message.content = content
+    return message
+
+
+def delete_chat_message(db: Session, message: ChatMessage) -> None:
+    db.delete(message)
+
+
+def delete_chat_session(db: Session, session: ChatSession) -> None:
+    db.delete(session)
+
+
 def _load_gcp_agent_module() -> Any:
     module_path = Path(__file__).resolve().parents[1] / "gcp-agent" / "agent.py"
     if not module_path.exists():
@@ -126,9 +145,17 @@ def _load_gcp_agent_module() -> Any:
     return module
 
 
-def _compact_history(messages: list[ChatMessage], limit: int = 6) -> str:
+RECENT_DISCUSSION_LIMIT = 10
+
+
+def _compact_history(
+    messages: list[ChatMessage],
+    *,
+    discussion_limit: int = RECENT_DISCUSSION_LIMIT,
+) -> str:
     parts: list[str] = []
-    for msg in messages[-limit:]:
+    message_limit = max(1, discussion_limit) * 2
+    for msg in messages[-message_limit:]:
         role = "User" if msg.role == "user" else "Assistant"
         parts.append(f"{role}: {msg.content}")
     return "\n".join(parts)
@@ -373,7 +400,9 @@ def generate_chat_response(
     prompt = (
         "You are a GCP security assistant. Always use MCP tool data for audit questions, "
         "and retrieve CIS Benchmark guidance for recommendations. "
-        "Answer in a ChatGPT-like tone with clear, step-by-step remediation guidance and cite CIS control IDs.\n\n"
+        "Answer in a ChatGPT-like tone with clear, step-by-step remediation guidance and cite CIS control IDs. "
+        f"Use the recent conversation context below to remember the last {RECENT_DISCUSSION_LIMIT} discussions "
+        "in this chat session, including your own previous answers.\n\n"
         f"Project ID: {project_hint}\n\n"
         f"{memory_section}"
         f"Conversation:\n{history}\n\n"

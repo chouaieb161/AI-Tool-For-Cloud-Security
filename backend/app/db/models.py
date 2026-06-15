@@ -102,6 +102,9 @@ class Resource(Base):
 
     project: Mapped[Project] = relationship("Project", back_populates="resources")
     findings: Mapped[list[Finding]] = relationship("Finding", back_populates="resource")
+    scan_resources: Mapped[list[ScanResource]] = relationship(
+        "ScanResource", back_populates="resource", cascade="all, delete-orphan"
+    )
 
 
 class Scan(Base):
@@ -115,6 +118,24 @@ class Scan(Base):
 
     project: Mapped[Project] = relationship("Project", back_populates="scans")
     findings: Mapped[list[Finding]] = relationship("Finding", back_populates="scan", cascade="all, delete-orphan")
+    scan_resources: Mapped[list[ScanResource]] = relationship(
+        "ScanResource", back_populates="scan", cascade="all, delete-orphan"
+    )
+
+
+class ScanResource(Base):
+    __tablename__ = "scan_resources"
+    __table_args__ = (
+        UniqueConstraint("scan_id", "resource_id", name="uq_scan_resource"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    scan_id: Mapped[int] = mapped_column(ForeignKey("scans.id", ondelete="CASCADE"), nullable=False, index=True)
+    resource_id: Mapped[int] = mapped_column(ForeignKey("resources.id", ondelete="CASCADE"), nullable=False, index=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+
+    scan: Mapped[Scan] = relationship("Scan", back_populates="scan_resources")
+    resource: Mapped[Resource] = relationship("Resource", back_populates="scan_resources")
 
 
 class Finding(Base):

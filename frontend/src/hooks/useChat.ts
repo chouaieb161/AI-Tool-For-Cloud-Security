@@ -5,6 +5,7 @@ import type { ChatMessage, ChatSession, Project } from '../api';
 export function useChat() {
   const [project, setProject] = useState<Project | null>(null);
   const [session, setSession] = useState<ChatSession | null>(null);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -31,13 +32,11 @@ export function useChat() {
 
         if (!activeSession) {
           activeSession = await api.createChatSession(activeProj.id, "Security Consultation");
+          existingSessions.unshift(activeSession);
         }
 
+        setSessions(existingSessions);
         setSession(activeSession);
-        
-        // load message history
-        const history = await api.getChatMessages(activeSession.id);
-        setMessages(history);
 
       } catch (err) {
         console.error("Failed to init chat session", err);
@@ -46,6 +45,74 @@ export function useChat() {
 
     initChat();
   }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const loadHistory = async () => {
+      try {
+        const history = await api.getChatMessages(session.id);
+        setMessages(history);
+      } catch (err) {
+        console.error("Failed to load chat history", err);
+      }
+    };
+    loadHistory();
+  }, [session]);
+
+  const createSession = async (title?: string) => {
+    if (!project) return;
+    try {
+      const created = await api.createChatSession(project.id, title || "New Session");
+      setSessions((prev) => [created, ...prev]);
+      setSession(created);
+      setMessages([]);
+    } catch (err) {
+      console.error("Failed to create session", err);
+    }
+  };
+
+  const deleteSession = async (sessionId: number) => {
+    try {
+      await api.deleteChatSession(sessionId);
+      setSessions((prev) => {
+        const next = prev.filter((s) => s.id !== sessionId);
+        if (session?.id === sessionId) {
+          const replacement = next[0] || null;
+          setSession(replacement);
+          setMessages([]);
+        }
+        return next;
+      });
+    } catch (err) {
+      console.error("Failed to delete session", err);
+    }
+  };
+
+  const selectSession = (sessionId: number) => {
+    const next = sessions.find((s) => s.id === sessionId) || null;
+    if (!next) return;
+    setSession(next);
+  };
+
+  const updateMessage = async (messageId: number, content: string) => {
+    if (!session || !content.trim()) return;
+    try {
+      const updated = await api.updateChatMessage(session.id, messageId, content.trim());
+      setMessages((prev) => prev.map((msg) => (msg.id === messageId ? updated : msg)));
+    } catch (err) {
+      console.error("Failed to update message", err);
+    }
+  };
+
+  const deleteMessage = async (messageId: number) => {
+    if (!session) return;
+    try {
+      await api.deleteChatMessage(session.id, messageId);
+      setMessages((prev) => prev.filter((msg) => msg.id !== messageId));
+    } catch (err) {
+      console.error("Failed to delete message", err);
+    }
+  };
 
   const sendMessage = async (content: string) => {
     if (!session || !content.trim()) return;
@@ -111,6 +178,10 @@ export function useChat() {
                 streamedSteps.push(data.payload.text);
               } else if (data.type === 'citation') {
                 streamedCitations.push(data.payload);
+              } else if (data.type === 'user_message') {
+                setMessages(prev => prev.map((msg) => (
+                  msg.id === userMsg.id ? { ...msg, id: data.payload.message_id } : msg
+                )));
               } else if (data.type === 'done') {
                 // finished
               }
@@ -143,5 +214,18 @@ export function useChat() {
     }
   };
 
-  return { project, session, messages, isLoading, isStreaming, sendMessage };
+  return {
+    project,
+    session,
+    sessions,
+    messages,
+    isLoading,
+    isStreaming,
+    sendMessage,
+    createSession,
+    deleteSession,
+    selectSession,
+    updateMessage,
+    deleteMessage
+  };
 }

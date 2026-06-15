@@ -25,6 +25,10 @@ class ChatMessageCreate(BaseModel):
     content: str = Field(..., min_length=1)
 
 
+class ChatMessageUpdate(BaseModel):
+    content: str = Field(..., min_length=1)
+
+
 class ChatMessageResponse(BaseModel):
     id: int
     session_id: int

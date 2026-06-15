@@ -51,6 +51,7 @@ class FreeformScanRequest(BaseModel):
 
 class DashboardResponse(BaseModel):
     total_resources_count: int
+    resource_count_basis: str = "unknown"
     risk_score: int
     findings_by_severity: dict[str, int]
     compliance_percentage: float
@@ -63,6 +64,9 @@ class FindingResponse(BaseModel):
     resource_id: int | None
     resource_name: str | None
     resource_type: str | None
+    resource_gcp_uri: str | None = None
+    resource_project_id: str | None = None
+    category: str
     cis_rule_id: str
     severity: Severity
     description: str

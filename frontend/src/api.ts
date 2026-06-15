@@ -6,6 +6,7 @@ const apiClient = axios.create({
 
 export interface DashboardData {
   total_resources_count: number;
+  resource_count_basis: string;
   risk_score: number;
   findings_by_severity: Record<string, number>;
   compliance_percentage: number;
@@ -18,6 +19,9 @@ export interface Finding {
   resource_id: number | null;
   resource_name: string | null;
   resource_type: string | null;
+  resource_gcp_uri: string | null;
+  resource_project_id: string | null;
+  category: string;
   cis_rule_id: string;
   severity: 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW';
   description: string;
@@ -114,9 +118,22 @@ export const api = {
     return res.data;
   },
 
+  deleteChatSession: async (sessionId: number) => {
+    await apiClient.delete(`/chat/sessions/${sessionId}`);
+  },
+
   getChatMessages: async (sessionId: number) => {
     const res = await apiClient.get<ChatMessage[]>(`/chat/sessions/${sessionId}/messages`);
     return res.data;
+  },
+
+  updateChatMessage: async (sessionId: number, messageId: number, content: string) => {
+    const res = await apiClient.patch<ChatMessage>(`/chat/sessions/${sessionId}/messages/${messageId}`, { content });
+    return res.data;
+  },
+
+  deleteChatMessage: async (sessionId: number, messageId: number) => {
+    await apiClient.delete(`/chat/sessions/${sessionId}/messages/${messageId}`);
   },
 
   getMemoryNotes: async (projectId: number, params?: { kind?: string; limit?: number }) => {

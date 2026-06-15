@@ -15,6 +15,7 @@ export default function SetupPage() {
   const [scanError, setScanError] = useState<string | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const isConfigured = Boolean(status?.configured || success);
+  const activeProjectId = status?.project_id ?? project?.gcp_project_id ?? 'Unknown';
 
   const ensureProject = async (projectId: string | null) => {
     if (!projectId) return null;
@@ -123,7 +124,7 @@ export default function SetupPage() {
 
         {isConfigured && (
           <div className="rounded-md border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
-            Credentials active for project: <span className="font-semibold">{status.project_id}</span>
+            Credentials active for project: <span className="font-semibold">{activeProjectId}</span>
           </div>
         )}
 
