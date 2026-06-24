@@ -1,6 +1,14 @@
 ﻿import { useCallback, useEffect, useState } from 'react';
 import { api } from '../api';
-import type { Project, DashboardData, Finding } from '../api';
+import type {
+  Project,
+  DashboardData,
+  Finding,
+  ScanHistoryItem,
+  FindingsMatrixItem,
+  RemediationPlanItem,
+  ScanDiffData,
+} from '../api';
 
 export function useDashboard() {
   const [project, setProject] = useState<Project | null>(null);
@@ -8,6 +16,12 @@ export function useDashboard() {
   const [findings, setFindings] = useState<Finding[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // New state for enhanced dashboard features
+  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([]);
+  const [findingsMatrix, setFindingsMatrix] = useState<FindingsMatrixItem[]>([]);
+  const [remediationPlan, setRemediationPlan] = useState<RemediationPlanItem[]>([]);
+  const [scanDiff, setScanDiff] = useState<ScanDiffData | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -27,6 +41,11 @@ export function useDashboard() {
       // 2. Load dashboard KPIs
       const dashboardData = await api.getDashboard(activeProject.id);
       setDashboard(dashboardData);
+
+      // 3. Load enhanced data in parallel (non-blocking, errors are caught silently)
+      api.getScanHistory(activeProject.id).then(setScanHistory).catch(() => {});
+      api.getFindingsMatrix(activeProject.id).then(setFindingsMatrix).catch(() => {});
+      api.getRemediationPlan(activeProject.id).then(setRemediationPlan).catch(() => {});
     } catch (err) {
       console.error(err);
       setError("Failed to load dashboard data. Ensure backend is running and mock_agent_run.py script was executed.");
@@ -56,5 +75,32 @@ export function useDashboard() {
     loadFindings();
   }, [dashboard?.latest_scan_id]);
 
-  return { project, dashboard, findings, loading, error, reload: loadData };
+  // Load scan diff when we have at least 2 scans in history
+  useEffect(() => {
+    const loadDiff = async () => {
+      if (!project || scanHistory.length < 2) return;
+      const fromScanId = scanHistory[scanHistory.length - 2].scan_id;
+      const toScanId = scanHistory[scanHistory.length - 1].scan_id;
+      try {
+        const diff = await api.getScanDiff(project.id, fromScanId, toScanId);
+        setScanDiff(diff);
+      } catch {
+        setScanDiff(null);
+      }
+    };
+    loadDiff();
+  }, [scanHistory, project]);
+
+  return {
+    project,
+    dashboard,
+    findings,
+    scanHistory,
+    findingsMatrix,
+    remediationPlan,
+    scanDiff,
+    loading,
+    error,
+    reload: loadData,
+  };
 }

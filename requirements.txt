@@ -37,4 +37,8 @@ uvicorn>=0.30.0
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 
+# OCI (read-only clients; CIS OCI Foundations Benchmark)
+oci>=2.130.0
+supabase>=2.0.0
+
 # google-cloud-sdk is the gcloud CLI — install separately from cloud.google.com/sdk if needed.

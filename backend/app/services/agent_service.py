@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -56,6 +57,51 @@ _CIS_TOOLS_IN_ORDER: list[tuple[str, str]] = [
     ("7", "get_bigquery_inventory"),
     ("8", "get_dataproc_inventory"),
 ]
+
+def _score_from_findings(
+    findings: list[GCPFindingResult],
+    total_resources: int | None = None,
+) -> int:
+    """
+    Scoring basé sur les CIS rules uniques avec leur sévérité.
+
+    Logique simple et équitable :
+      - On groupe les findings par (CIS rule ID + sévérité)
+      - Chaque groupe unique = 1 point de pénalité selon la sévérité
+      - CRITICAL = -15, HIGH = -10, MEDIUM = -5, LOW = -2
+      - Peu importe le nombre de ressources affectées par la même règle
+
+    Pourquoi c'est mieux ?
+      - Si 50 buckets ont tous le même problème "5.1 HIGH" → pénalité unique de -10
+      - Si 10 machines ont "4.6 HIGH" → pénalité unique de -10
+      - Score total = 100 - somme(pénalités), limité à [0, 100]
+    """
+    if not findings:
+        return 100
+
+    # Déduplication : une seule pénalité par (cis_rule_id + severity)
+    seen_pairs: set[tuple[str, str]] = set()
+    total_penalty = 0
+
+    for f in findings:
+        sev_key = f.severity.value if hasattr(f.severity, 'value') else str(f.severity)
+        sev_key = sev_key.upper()
+        pair = (f.cis_rule_id, sev_key)
+        if pair in seen_pairs:
+            continue
+        seen_pairs.add(pair)
+
+        if sev_key == "CRITICAL":
+            total_penalty += 15
+        elif sev_key == "HIGH":
+            total_penalty += 10
+        elif sev_key == "MEDIUM":
+            total_penalty += 5
+        elif sev_key == "LOW":
+            total_penalty += 2
+
+    score = 100 - total_penalty
+    return max(0, min(100, score))
 
 
 def _normalize_resource_type(asset_type: str | None) -> str:
@@ -416,10 +462,7 @@ def _deterministic_findings_from_state(
                         + (f" region `{region}`" if region else "")
                         + ". Evidence: `enable_flow_logs=false` from Compute Subnetworks aggregated_list."
                     ),
-                    remediation_steps=_remediation_from_cis_rules(
-                        "3.8",
-                        cis_rules,
-                    ),
+                    remediation_steps=_remediation_from_cis_rules("3.8", cis_rules),
                     resource_gcp_uri=uri,
                 )
             )
@@ -571,20 +614,6 @@ def _deterministic_findings_from_state(
     return list(dedup.values())
 
 
-def _score_from_findings(findings: list[GCPFindingResult]) -> int:
-    penalty = 0
-    for f in findings:
-        if f.severity == Severity.CRITICAL:
-            penalty += 15
-        elif f.severity == Severity.HIGH:
-            penalty += 10
-        elif f.severity == Severity.MEDIUM:
-            penalty += 5
-        else:
-            penalty += 2
-    return max(0, min(100, 100 - penalty))
-
-
 def _local_cis_rules_for_sections(sections: list[str], query: str) -> str:
     chunks: list[str] = []
     try:
@@ -696,7 +725,12 @@ def _result_from_state(state: dict[str, Any], project: Project) -> GCPScanResult
         report_md = str(state.get("report_markdown") or state.get("analysis_markdown") or "")
         findings = _findings_from_markdown(report_md, cis_rules=cis_rules, resources=resources)
     findings = _enrich_findings_with_context(findings, cis_rules=cis_rules, resources=resources)
-    score = _score_from_findings(findings)
+
+    # NEW: pass total resource count to scoring
+    non_project_resources = [r for r in resources if r.type.upper() != "PROJECT"]
+    total_resources = len(non_project_resources) if non_project_resources else len(resources)
+    score = _score_from_findings(findings, total_resources=total_resources)
+
     return GCPScanResult(
         score=score,
         status=ScanStatus.COMPLETED,
@@ -831,7 +865,10 @@ def _mock_scan_result(project: Project) -> GCPScanResult:
             resource_gcp_uri=resources[1].gcp_uri,
         ),
     ]
-    return GCPScanResult(score=58, status=ScanStatus.COMPLETED, resources=resources, findings=findings)
+    # NEW: use the improved scoring even for mock
+    total_resources = len(resources)
+    score = _score_from_findings(findings, total_resources=total_resources)
+    return GCPScanResult(score=score, status=ScanStatus.COMPLETED, resources=resources, findings=findings)
 
 
 def run_langgraph_scan(project: Project) -> GCPScanResult:
@@ -921,7 +958,12 @@ def _upsert_resource(db: Session, project_id: int, item: GCPResourceResult) -> R
     return resource
 
 
-def persist_scan_result(db: Session, project: Project, result: GCPScanResult) -> int:
+def persist_scan_result(
+    db: Session,
+    project: Project,
+    result: GCPScanResult,
+    trigger_type: str | None = None,
+) -> int:
     resource_map: dict[str, Resource] = {}
     observed_resource_ids: set[int] = set()
     tx = db.begin_nested() if db.in_transaction() else db.begin()
@@ -930,6 +972,8 @@ def persist_scan_result(db: Session, project: Project, result: GCPScanResult) ->
             project_id=project.id,
             score=result.score,
             status=result.status,
+            trigger_type=trigger_type,
+            tenant_provider_id=project.tenant_provider_id,
         )
         db.add(scan)
         db.flush()
@@ -986,10 +1030,14 @@ def persist_scan_result(db: Session, project: Project, result: GCPScanResult) ->
     return scan.id
 
 
-def run_scan_for_project(db: Session, project: Project) -> int:
+def run_scan_for_project(
+    db: Session,
+    project: Project,
+    trigger_type: str | None = None,
+) -> int:
     try:
         result = run_langgraph_scan(project)
-        scan_id = persist_scan_result(db, project, result)
+        scan_id = persist_scan_result(db, project, result, trigger_type=trigger_type)
         db.commit()
         return scan_id
     except Exception as exc:
@@ -998,10 +1046,13 @@ def run_scan_for_project(db: Session, project: Project) -> int:
             project_id=project.id,
             score=0,
             status=ScanStatus.FAILED,
+            trigger_type=trigger_type,
+            tenant_provider_id=project.tenant_provider_id,
         )
         db.add(failed_scan)
         db.commit()
-        raise AgentExecutionError(str(exc)) from exc
+        db.refresh(failed_scan)
+        raise AgentExecutionError(f"Scan failed: {exc}") from exc
 
 
 def run_scan_for_project_with_query(db: Session, project: Project, query: str) -> int:
@@ -1019,4 +1070,5 @@ def run_scan_for_project_with_query(db: Session, project: Project, query: str) -
         )
         db.add(failed_scan)
         db.commit()
-        raise AgentExecutionError(str(exc)) from exc
+        db.refresh(failed_scan)
+        raise AgentExecutionError(f"Scan failed: {exc}") from exc

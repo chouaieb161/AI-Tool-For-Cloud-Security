@@ -49,7 +49,7 @@ Use the same core stack already present:
 - **LangGraph** for agent workflow.
 - **MCP / FastMCP** for read-only cloud inventory tools.
 - **LangChain + Groq** for LLM calls.
-- **Chroma + BM25 + sentence-transformers** for CIS RAG.
+- **Supabase + BM25 + sentence-transformers** for CIS RAG.
 - **Langfuse** for tracing, as already supported in the GCP agent.
 
 Add OCI-specific dependencies:

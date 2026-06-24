@@ -79,3 +79,33 @@ class ScanResponse(BaseModel):
     timestamp: datetime
     score: int
     status: ScanStatus
+
+
+class ScanHistoryItem(BaseModel):
+    scan_id: int
+    score: int
+    findings_count: int
+    timestamp: datetime
+
+
+class FindingsMatrixItem(BaseModel):
+    category: str
+    critical: int = 0
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+    total: int = 0
+
+
+class RemediationPlanItem(BaseModel):
+    cis_rule_id: str
+    severity: Severity
+    description: str
+    remediation_steps: str
+    affected_resources: int
+
+
+class ScanDiffResponse(BaseModel):
+    new_findings: list[FindingResponse] = Field(default_factory=list)
+    fixed_findings: list[FindingResponse] = Field(default_factory=list)
+    persistent_findings: list[FindingResponse] = Field(default_factory=list)

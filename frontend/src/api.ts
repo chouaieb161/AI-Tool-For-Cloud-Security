@@ -77,6 +77,36 @@ export interface CredentialStatus {
   credentials_path: string | null;
 }
 
+export interface ScanHistoryItem {
+  scan_id: number;
+  score: number;
+  findings_count: number;
+  timestamp: string;
+}
+
+export interface FindingsMatrixItem {
+  category: string;
+  critical: number;
+  high: number;
+  medium: number;
+  low: number;
+  total: number;
+}
+
+export interface RemediationPlanItem {
+  cis_rule_id: string;
+  severity: string;
+  description: string;
+  remediation_steps: string;
+  affected_resources: number;
+}
+
+export interface ScanDiffData {
+  new_findings: Finding[];
+  fixed_findings: Finding[];
+  persistent_findings: Finding[];
+}
+
 export const api = {
   getProjects: async () => {
     const res = await apiClient.get<Project[]>('/projects');
@@ -160,6 +190,30 @@ export const api = {
     form.append('file', file);
     const res = await apiClient.post<CredentialStatus>('/credentials/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' }
+    });
+    return res.data;
+  },
+
+  // --- NEW DASHBOARD ENDPOINTS ---
+
+  getScanHistory: async (projectId: number, limit: number = 20) => {
+    const res = await apiClient.get<ScanHistoryItem[]>(`/scans/history/${projectId}`, { params: { limit } });
+    return res.data;
+  },
+
+  getFindingsMatrix: async (projectId: number) => {
+    const res = await apiClient.get<FindingsMatrixItem[]>(`/scans/matrix/${projectId}`);
+    return res.data;
+  },
+
+  getRemediationPlan: async (projectId: number) => {
+    const res = await apiClient.get<RemediationPlanItem[]>(`/scans/remediation-plan/${projectId}`);
+    return res.data;
+  },
+
+  getScanDiff: async (projectId: number, fromScanId: number, toScanId: number) => {
+    const res = await apiClient.get<ScanDiffData>(`/scans/diff/${projectId}`, {
+      params: { from_scan_id: fromScanId, to_scan_id: toScanId }
     });
     return res.data;
   }
