@@ -21,16 +21,16 @@ export function useCredentials() {
     }
   }, []);
 
-  const upload = useCallback(async (file: File) => {
+  const upload = useCallback(async (file: File, provider: 'GCP' | 'OCI' = 'GCP') => {
     try {
       setLoading(true);
       setError(null);
-      const data = await api.uploadCredentials(file);
+      const data = await api.uploadCredentials(file, provider);
       setStatus(data);
       return data;
     } catch (err) {
       console.error('Failed to upload credentials', err);
-      setError('Upload failed. Please provide a valid service account JSON file.');
+      setError(provider === 'OCI' ? 'Upload failed. Please provide a valid OCI config file.' : 'Upload failed. Please provide a valid service account JSON file.');
       throw err;
     } finally {
       setLoading(false);

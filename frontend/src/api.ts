@@ -33,6 +33,7 @@ export interface Project {
   name: string;
   gcp_project_id: string;
   created_at: string;
+  cloud_provider?: 'GCP' | 'OCI';
 }
 
 export interface ChatSession {
@@ -68,13 +69,14 @@ export interface ScanStatus {
   project_id: number;
   timestamp: string;
   score: number;
-  status: 'COMPLETED' | 'FAILED';
+  status: 'COMPLETED' | 'FAILED' | 'RUNNING' | 'PENDING';
 }
 
 export interface CredentialStatus {
   configured: boolean;
   project_id: string | null;
   credentials_path: string | null;
+  provider?: 'GCP' | 'OCI' | null;
 }
 
 export interface ScanHistoryItem {
@@ -107,17 +109,44 @@ export interface ScanDiffData {
   persistent_findings: Finding[];
 }
 
+// ---- OCI-specific types ----
+export interface OCIScanResult {
+  score: number;
+  status: string;
+  resources: { type: string; name: string; ocid: string }[];
+  findings: {
+    cis_rule_id: string;
+    severity: string;
+    description: string;
+    remediation_steps: string;
+    resource_ocid: string | null;
+  }[];
+}
+
+export interface OCIDashboardData {
+  total_resources_count: number;
+  resource_count_basis: string;
+  risk_score: number;
+  findings_by_severity: Record<string, number>;
+  compliance_percentage: number;
+  latest_scan_id: number | null;
+}
+
+export type CloudProvider = 'GCP' | 'OCI';
+
 export const api = {
+  // ─── Projects ───
   getProjects: async () => {
     const res = await apiClient.get<Project[]>('/projects');
     return res.data;
   },
   
-  createProject: async (name: string, gcp_project_id: string) => {
-    const res = await apiClient.post<Project>('/projects', { name, gcp_project_id });
+  createProject: async (name: string, gcp_project_id: string, cloudProvider: CloudProvider = 'GCP') => {
+    const res = await apiClient.post<Project>('/projects', { name, gcp_project_id, cloud_provider: cloudProvider });
     return res.data;
   },
 
+  // ─── GCP Dashboard ───
   getDashboard: async (projectId: number) => {
     const res = await apiClient.get<DashboardData>(`/projects/${projectId}/dashboard`);
     return res.data;
@@ -138,6 +167,28 @@ export const api = {
     return res.data;
   },
 
+  // ─── OCI Scans ───
+  triggerOCIScan: async (projectId: number) => {
+    const res = await apiClient.post<{ scan_id: number }>(`/oci/scans/trigger?project_id=${projectId}`);
+    return res.data;
+  },
+
+  freeformOCIScan: async (projectId: number, query: string) => {
+    const res = await apiClient.post<OCIScanResult>('/oci/scans/freeform', { project_id: projectId, query });
+    return res.data;
+  },
+
+  getOCIDashboard: async (projectId: number) => {
+    const res = await apiClient.get<OCIDashboardData>(`/oci/dashboard?project_id=${projectId}`);
+    return res.data;
+  },
+
+  getOCIScanFindings: async (scanId: number) => {
+    const res = await apiClient.get<OCIScanResult>(`/oci/scans/${scanId}/findings`);
+    return res.data;
+  },
+
+  // ─── Chat ───
   getChatSessions: async (projectId: number) => {
     const res = await apiClient.get<ChatSession[]>(`/chat/sessions`, { params: { project_id: projectId } });
     return res.data;
@@ -166,6 +217,7 @@ export const api = {
     await apiClient.delete(`/chat/sessions/${sessionId}/messages/${messageId}`);
   },
 
+  // ─── Memory ───
   getMemoryNotes: async (projectId: number, params?: { kind?: string; limit?: number }) => {
     const res = await apiClient.get<MemoryNote[]>(`/projects/${projectId}/memory`, { params });
     return res.data;
@@ -180,22 +232,22 @@ export const api = {
     await apiClient.delete(`/projects/${projectId}/memory/${noteId}`);
   },
 
+  // ─── Credentials ───
   getCredentialStatus: async () => {
     const res = await apiClient.get<CredentialStatus>('/credentials/status');
     return res.data;
   },
 
-  uploadCredentials: async (file: File) => {
+  uploadCredentials: async (file: File, provider: CloudProvider = 'GCP') => {
     const form = new FormData();
     form.append('file', file);
-    const res = await apiClient.post<CredentialStatus>('/credentials/upload', form, {
+    const res = await apiClient.post<CredentialStatus>(`/credentials/upload?provider=${provider}`, form, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
     return res.data;
   },
 
-  // --- NEW DASHBOARD ENDPOINTS ---
-
+  // ─── Enhanced Dashboard Endpoints ───
   getScanHistory: async (projectId: number, limit: number = 20) => {
     const res = await apiClient.get<ScanHistoryItem[]>(`/scans/history/${projectId}`, { params: { limit } });
     return res.data;

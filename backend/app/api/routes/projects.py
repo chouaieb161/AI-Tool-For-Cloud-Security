@@ -32,7 +32,11 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
             detail="Project with this gcp_project_id already exists",
         )
 
-    project = Project(name=payload.name, gcp_project_id=payload.gcp_project_id)
+    project = Project(
+        name=payload.name,
+        gcp_project_id=payload.gcp_project_id,
+        cloud_provider=(payload.cloud_provider or "GCP").upper(),
+    )
     db.add(project)
     db.commit()
     db.refresh(project)
@@ -40,6 +44,7 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
         id=project.id,
         name=project.name,
         gcp_project_id=project.gcp_project_id,
+        cloud_provider=project.cloud_provider,
         created_at=project.created_at,
     )
 
@@ -52,6 +57,7 @@ def list_projects(db: Session = Depends(get_db)):
             id=p.id,
             name=p.name,
             gcp_project_id=p.gcp_project_id,
+            cloud_provider=p.cloud_provider,
             created_at=p.created_at,
         )
         for p in rows

@@ -31,12 +31,14 @@ class GCPScanResult(BaseModel):
 class ProjectCreate(BaseModel):
     name: str
     gcp_project_id: str
+    cloud_provider: str = "GCP"
 
 
 class ProjectResponse(BaseModel):
     id: int
     name: str
     gcp_project_id: str
+    cloud_provider: str
     created_at: datetime
 
 

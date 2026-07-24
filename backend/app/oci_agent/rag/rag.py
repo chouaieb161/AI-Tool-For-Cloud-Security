@@ -36,11 +36,9 @@ from app.rag.embeddings import get_embedding_backend
 PDF_DIR = Path(__file__).resolve().parent / "cis_pdf"
 JSONL_PATH = Path(__file__).resolve().parents[3] / "cis_parsed.jsonl"
 
-# Supabase env config
-SUPABASE_URL = os.environ.get("OCI_SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("OCI_SUPABASE_KEY")
-SUPABASE_TABLE = os.environ.get("OCI_SUPABASE_VECTORS_TABLE", "oci_vectors")
-SUPABASE_QUERY_NAME = os.environ.get("OCI_SUPABASE_QUERY_NAME", "match_documents")
+# Supabase env config (some values lazy-loaded to support .env loading after import)
+SUPABASE_TABLE = "oci_vectors"
+SUPABASE_QUERY_NAME = os.environ.get("OCI_SUPABASE_QUERY_NAME", "match_oci_vectors")
 
 # CIS 6-category mapping
 SECTION_CATEGORY = {
@@ -242,12 +240,14 @@ def build_records(pdf_path: str | Path | None = None) -> list[dict[str, Any]]:
 
 def _get_supabase_client() -> Client:
     """Get Supabase client; raise if credentials missing."""
-    if not SUPABASE_URL or not SUPABASE_KEY:
+    url = os.environ.get("OCI_SUPABASE_URL")
+    key = os.environ.get("OCI_SUPABASE_KEY")
+    if not url or not key:
         raise ValueError(
             "Missing OCI_SUPABASE_URL or OCI_SUPABASE_KEY. "
             "Set these environment variables to use Supabase."
         )
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    return create_client(url, key)
 
 
 def _normalize_embedding(embedding: list[float]) -> np.ndarray:
@@ -398,13 +398,23 @@ def retrieve_from_supabase(
         match_params = {"query_embedding": q_emb, "match_count": top_k}
         res = client.rpc(SUPABASE_QUERY_NAME, match_params).execute()
         rows = res.data or []
-        
+
         # Apply client-side category filter if needed
         if category and rows:
             rows = [
                 r for r in rows
                 if isinstance(r.get("metadata"), dict) and r["metadata"].get("category") == category
             ]
+
+        # Fallback: if category filter emptied the results, fetch all records for that category
+        if category and not rows:
+            all_resp = client.table(SUPABASE_TABLE).select("id,metadata,document").filter(
+                "metadata->>category", "eq", category
+            ).execute()
+            rows = all_resp.data or []
+
+        rows = rows[:top_k]
+
     except Exception as e:
         # Fallback: client-side scoring
         print(f"⚠ RPC '{SUPABASE_QUERY_NAME}' not available; using client-side scoring: {e}")
@@ -453,6 +463,49 @@ def retrieve_from_supabase(
         )
 
     return results
+
+
+# ============================================================================
+# RETRIEVER OBJECT (for agent.py compatibility)
+# ============================================================================
+
+
+class OCIRetriever:
+    """Duck-typed retriever that wraps retrieve_from_supabase() with a .retrieve() method.
+
+    Matches the interface expected by agent.py node_retrieve_rules().
+    """
+
+    def retrieve(
+        self,
+        query: str,
+        *,
+        top_k: int = 5,
+        category: str | None = None,
+    ) -> list[dict[str, Any]]:
+        return retrieve_from_supabase(query, top_k=top_k, category=category)
+
+
+_default_oci_retriever: OCIRetriever | None = None
+
+
+def get_oci_retriever() -> OCIRetriever:
+    global _default_oci_retriever
+    if _default_oci_retriever is None:
+        _default_oci_retriever = OCIRetriever()
+    return _default_oci_retriever
+
+
+def format_retrieval_for_prompt(results: list[dict[str, Any]]) -> str:
+    """Compact string for LLM consumption (minimal tokens)."""
+    parts: list[str] = []
+    for i, r in enumerate(results, start=1):
+        parts.append(
+            f"### CIS {r.get('cis_id', '')} — {r.get('title', '')}\n"
+            f"**Relevant excerpt:**\n{r.get('relevant_text', '')}\n\n"
+            f"**Remediation:**\n{r.get('remediation', '')}\n"
+        )
+    return "\n---\n".join(parts) if parts else "(No CIS rules retrieved.)"
 
 
 # ============================================================================

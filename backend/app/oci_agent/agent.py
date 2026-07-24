@@ -14,6 +14,57 @@ from typing import Any, Callable, TypedDict
 import typing
 
 from dotenv import load_dotenv
+
+# ── Load .env BEFORE any module-level env reads ──────────────────────────
+_env_candidates = [
+    Path(__file__).resolve().parents[3] / ".env",  # repo root
+    Path(__file__).resolve().parents[2] / ".env",  # backend/
+    Path(__file__).resolve().parent / ".env",
+]
+for env_path in _env_candidates:
+    if env_path.exists():
+        load_dotenv(env_path, override=False)
+
+# ── Resolve OCI config path ──────────────────────────────────────────────
+def _resolve_oci_config_path() -> None:
+    """Normalize OCI_CONFIG_FILE to an absolute path if set."""
+    raw = os.environ.get("OCI_CONFIG_FILE")
+    if not raw:
+        return
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        repo_root = Path(__file__).resolve().parents[3]
+        backend_root = Path(__file__).resolve().parents[2]
+        for base in (repo_root, backend_root, Path.home()):
+            candidate = (base / path).resolve()
+            if candidate.exists():
+                os.environ["OCI_CONFIG_FILE"] = str(candidate)
+                return
+    elif path.exists():
+        os.environ["OCI_CONFIG_FILE"] = str(path.resolve())
+
+_resolve_oci_config_path()
+
+# ── Resolve Chroma path ──────────────────────────────────────────────────
+def _resolve_chroma_path() -> None:
+    raw = os.environ.get("OCI_CHROMA_CIS_PATH")
+    if not raw:
+        return
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        if path.exists():
+            os.environ["OCI_CHROMA_CIS_PATH"] = str(path.resolve())
+        return
+    repo_root = Path(__file__).resolve().parents[3]
+    backend_root = Path(__file__).resolve().parents[2]
+    for base in (backend_root, repo_root):
+        candidate = (base / path).resolve()
+        if candidate.exists():
+            os.environ["OCI_CHROMA_CIS_PATH"] = str(candidate)
+            return
+
+_resolve_chroma_path()
+
 from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_core.tools import StructuredTool
 from langchain_groq import ChatGroq
@@ -21,17 +72,21 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from app.oci_agent.mcp.oci_mcp_server import call_oci_mcp_tool
-from app.oci_agent.rag.retriever import format_retrieval_for_prompt, get_oci_retriever
-from app.oci_agent.rag.vector_store import DEFAULT_PERSIST
+from app.oci_agent.rag.rag import format_retrieval_for_prompt, get_oci_retriever
 
-# CIS OCI Foundations Benchmark major section -> retriever category (6-category mapping)
+# CIS OCI Foundations Benchmark major section -> retriever category
+# Maps to the "category" field stored in Supabase metadata during ingestion.
+# Sections 7 & 8 are intentionally omitted because the ingested CIS PDF
+# only covers the 6-section Foundations Benchmark scope.
+# Matches the "category" field values actually stored in Supabase metadata.
+# Verified: IAM, Networking, Logging, Compute, Storage, Asset, General.
 _SECTION_CATEGORY = {
-    "1": "Identity and Access Management",
+    "1": "IAM",
     "2": "Networking",
-    "3": "Logging and Monitoring",
+    "3": "Logging",
     "4": "Compute",
     "5": "Storage",
-    "6": "Asset Management",
+    "6": "Asset",
 }
 
 # Tools in CIS §1–§8 order (matches OCI MCP server)
@@ -58,63 +113,13 @@ def _build_tool_catalog() -> dict[str, dict[str, Any]]:
     return catalog
 
 
-_env_candidates = [
-    Path(__file__).resolve().parents[3] / ".env",  # repo root
-    Path(__file__).resolve().parents[2] / ".env",  # backend/
-    Path(__file__).resolve().parent / ".env",
-]
-for env_path in _env_candidates:
-    if env_path.exists():
-        load_dotenv(env_path, override=False)
-
-
-def _resolve_oci_config_path() -> None:
-    """Normalize OCI_CONFIG_FILE to an absolute path if set."""
-    raw = os.environ.get("OCI_CONFIG_FILE")
-    if not raw:
-        return
-    path = Path(raw).expanduser()
-    if not path.is_absolute():
-        repo_root = Path(__file__).resolve().parents[3]
-        backend_root = Path(__file__).resolve().parents[2]
-        for base in (repo_root, backend_root, Path.home()):
-            candidate = (base / path).resolve()
-            if candidate.exists():
-                os.environ["OCI_CONFIG_FILE"] = str(candidate)
-                return
-    elif path.exists():
-        os.environ["OCI_CONFIG_FILE"] = str(path.resolve())
-
-
-_resolve_oci_config_path()
-
-
-def _resolve_chroma_path() -> None:
-    raw = os.environ.get("OCI_CHROMA_CIS_PATH")
-    if not raw:
-        return
-    path = Path(raw).expanduser()
-    if path.is_absolute():
-        if path.exists():
-            os.environ["OCI_CHROMA_CIS_PATH"] = str(path.resolve())
-        return
-    repo_root = Path(__file__).resolve().parents[3]
-    backend_root = Path(__file__).resolve().parents[2]
-    for base in (backend_root, repo_root):
-        candidate = (base / path).resolve()
-        if candidate.exists():
-            os.environ["OCI_CHROMA_CIS_PATH"] = str(candidate)
-            return
-
-
-_resolve_chroma_path()
 
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 _FULL_AUDIT_SECTION_THRESHOLD = 6
-_CIS_MAX_CHARS_FULL_AUDIT = int(os.environ.get("OCI_CIS_MAX_CHARS_FULL_AUDIT", "12000"))
+_CIS_MAX_CHARS_FULL_AUDIT = int(os.environ.get("OCI_CIS_MAX_CHARS_FULL_AUDIT", "14000"))
 _CIS_MAX_CHARS_PARTIAL_AUDIT = int(os.environ.get("OCI_CIS_MAX_CHARS_PARTIAL_AUDIT", "20000"))
-_RESOURCE_JSON_MAX_CHARS = int(os.environ.get("OCI_RESOURCE_JSON_MAX_CHARS", "18000"))
+_RESOURCE_JSON_MAX_CHARS = int(os.environ.get("OCI_RESOURCE_JSON_MAX_CHARS", "40000"))
 
 
 def configure_quiet_runtime() -> None:
@@ -169,6 +174,9 @@ def _build_langchain_mcp_tools(
     tool_catalog: dict[str, dict[str, Any]],
     mcp_call: Callable[[str, dict[str, Any] | None], str],
 ) -> dict[str, StructuredTool]:
+    import time as _time
+    import json as _json
+    
     tools: dict[str, StructuredTool] = {}
     for tool_name, meta in tool_catalog.items():
         description = str(meta.get("description", "")).strip() or tool_name
@@ -192,7 +200,23 @@ def _build_langchain_mcp_tools(
                     args["compartment_ocid"] = compartment_ocid
                 if region:
                     args["region"] = region
-                return mcp_call(_tool_name, args)
+                
+                # First attempt
+                raw = mcp_call(_tool_name, args)
+                
+                # Retry once if result has errors (transient OCI throttling)
+                try:
+                    parsed = _json.loads(raw)
+                    if isinstance(parsed, dict) and len(parsed.get("errors") or []) > 0:
+                        # Import here to avoid circular imports
+                        from app.oci_agent.mcp.oci_mcp_server import _reset_oci_client as _reset_oci
+                        _reset_oci()
+                        _time.sleep(1.5)
+                        raw = mcp_call(_tool_name, args)
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+                    
+                return raw
 
             return _fn
 
@@ -302,40 +326,133 @@ def _truncate_text(text: str, max_chars: int) -> str:
     return text[:keep].rstrip() + "\n\n...[truncated for prompt budget]..."
 
 
-def _compact_for_prompt(value: Any, *, max_dict_items: int, max_list_items: int, max_string_chars: int, max_depth: int, _depth: int = 0) -> Any:
+# ── Known list-key fields in OCI inventory payloads that the LLM needs for evidence ──
+_EVIDENCE_LIST_KEYS = {
+    "users", "groups", "policies", "compartments", "api_keys", "auth_tokens",
+    "vcns", "subnets", "security_lists", "internet_gateways", "route_tables",
+    "log_groups", "logs", "alarms",
+    "instances", "boot_volumes", "instance_flags",
+    "buckets", "public_buckets",
+    "db_systems", "autonomous_databases",
+    "tag_namespaces", "budgets",
+    "cloud_guard_problems", "vaults", "keys",
+    "open_security_lists", "users_without_mfa",
+}
+
+
+def _compact_item(value: Any, *, _depth: int = 0) -> Any:
+    """Aggressively compact a single list item (user, policy, bucket, etc.)
+    into a ~10-line JSON-safe summary. Keeps only id, name, lifecycle_state,
+    and security-relevant fields, dropping deep metadata.
+    """
+    if _depth > 5:
+        return "..."
+    if isinstance(value, dict):
+        # Fields to always keep
+        keep = {"id", "name", "display_name", "user_name", "lifecycle_state",
+                "shape", "compartment_id", "source", "protocol",
+                "is_default", "defined_tags", "freeform_tags",
+                "description", "time_created", "time_modified", "is_mfa_activated"}
+        out = {}
+        for k in keep:
+            if k in value:
+                v = value[k]
+                if isinstance(v, (str, int, float, bool)):
+                    out[k] = v
+                elif isinstance(v, list) and len(v) <= 3:
+                    out[k] = [str(x)[:120] for x in v]
+                elif isinstance(v, dict) and len(v) <= 5:
+                    out[k] = {sk: str(sv)[:80] for sk, sv in v.items()}
+        # Collect useful length/count metrics from nested lists
+        for k, v in value.items():
+            if isinstance(v, list) and k not in out and not k.startswith("_"):
+                out[f"{k}_count"] = len(v)
+        return out if out else _compact_for_prompt_legacy(value, max_dict_items=8, max_list_items=4, max_string_chars=120, max_depth=4, _depth=_depth + 1)
+    if isinstance(value, list):
+        return [_compact_item(x, _depth=_depth + 1) for x in value[:10]]
+    if isinstance(value, str):
+        return value[:200]
+    return value
+
+
+def _compact_for_prompt_legacy(value: Any, *, max_dict_items: int, max_list_items: int, max_string_chars: int, max_depth: int, _depth: int = 0) -> Any:
+    """Original generic recursive truncation (fallback for non-evidence data)."""
     if _depth >= max_depth:
-        return "...[max depth reached]..."
+        return "..."
     if isinstance(value, dict):
         compact: dict[str, Any] = {}
         items = list(value.items())
         for k, v in items[:max_dict_items]:
-            compact[str(k)] = _compact_for_prompt(v, max_dict_items=max_dict_items, max_list_items=max_list_items, max_string_chars=max_string_chars, max_depth=max_depth, _depth=_depth + 1)
+            compact[str(k)] = _compact_for_prompt_legacy(v, max_dict_items=max_dict_items, max_list_items=max_list_items, max_string_chars=max_string_chars, max_depth=max_depth, _depth=_depth + 1)
         if len(items) > max_dict_items:
-            compact["_truncated_keys"] = len(items) - max_dict_items
+            pass  # silently drop excess keys
         return compact
     if isinstance(value, list):
-        compact_list = [_compact_for_prompt(item, max_dict_items=max_dict_items, max_list_items=max_list_items, max_string_chars=max_string_chars, max_depth=max_depth, _depth=_depth + 1) for item in value[:max_list_items]]
+        compact_list = [_compact_for_prompt_legacy(item, max_dict_items=max_dict_items, max_list_items=max_list_items, max_string_chars=max_string_chars, max_depth=max_depth, _depth=_depth + 1) for item in value[:max_list_items]]
         if len(value) > max_list_items:
-            compact_list.append(f"...[{len(value) - max_list_items} more item(s)]...")
+            compact_list.append(f"...[{len(value) - max_list_items} more]")
         return compact_list
     if isinstance(value, str):
-        return value if len(value) <= max_string_chars else value[:max_string_chars] + "...[truncated]"
+        return value if len(value) <= max_string_chars else value[:max_string_chars] + "…"
+    return value
+
+
+def _compact_for_prompt(value: Any, *, max_list_items: int = 50, _depth: int = 0) -> Any:
+    """Smart compaction that preserves evidence lists and aggressively
+    compacts individual items, keeping only security-relevant fields.
+
+    Strategy:
+    - Top-level 'summary' dicts: keep as-is (small, high value)
+    - Top-level evidence lists (users, policies, buckets, etc.): keep items up to max_list_items,
+      each item aggressively compacted via _compact_item()
+    - Everything else: apply generic legacy truncation with moderate limits
+    """
+    if _depth > 8:
+        return "..."
+    if isinstance(value, dict):
+        compact: dict[str, Any] = {}
+        items = list(value.items())
+        summary_info: list[str] = []
+        for k, v in items:
+            # Preserve summary dicts fully (they're small and high-value)
+            if k == "summary" and isinstance(v, dict):
+                compact[k] = v
+                continue
+            # Evidence lists: keep many items, each aggressively compacted
+            if k in _EVIDENCE_LIST_KEYS and isinstance(v, list):
+                kept = [_compact_item(x, _depth=_depth + 1) for x in v[:max_list_items]]
+                if len(v) > max_list_items:
+                    kept.append(f"...[{len(v) - max_list_items} more {k}]")
+                compact[k] = kept
+                continue
+            # Errors: keep first few
+            if k == "errors" and isinstance(v, list):
+                compact[k] = v[:5]
+                if len(v) > 5:
+                    compact[k].append(f"...[{len(v) - 5} more errors]")
+                continue
+            # Other keys: recuse with moderate legacy limits
+            compact[str(k)] = _compact_for_prompt_legacy(v, max_dict_items=10, max_list_items=6, max_string_chars=200, max_depth=4, _depth=_depth + 1)
+        return compact
+    if isinstance(value, list):
+        return [_compact_for_prompt(item, max_list_items=max_list_items, _depth=_depth + 1) for item in value[:20]]
+    if isinstance(value, str):
+        return value[:300]
     return value
 
 
 def _build_prompt_inventory(resources: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    variants = (
-        dict(max_dict_items=40, max_list_items=30, max_string_chars=500, max_depth=6),
-        dict(max_dict_items=25, max_list_items=15, max_string_chars=280, max_depth=5),
-        dict(max_dict_items=15, max_list_items=8, max_string_chars=180, max_depth=4),
-    )
-    for i, limits in enumerate(variants):
-        compact = _compact_for_prompt(resources, **limits)
-        rendered = json.dumps(compact, indent=2, default=str)
-        if len(rendered) <= _RESOURCE_JSON_MAX_CHARS:
-            return compact, i > 0
-    fallback = _compact_for_prompt(resources, max_dict_items=10, max_list_items=5, max_string_chars=120, max_depth=3)
-    return fallback, True
+    compact = _compact_for_prompt(resources, max_list_items=50)
+    rendered = json.dumps(compact, indent=2, default=str)
+    truncated = len(rendered) > _RESOURCE_JSON_MAX_CHARS
+    if truncated:
+        # Reduce list sizes progressively until under budget
+        for max_n in (30, 20, 12, 6, 3):
+            compact = _compact_for_prompt(resources, max_list_items=max_n)
+            rendered = json.dumps(compact, indent=2, default=str)
+            if len(rendered) <= _RESOURCE_JSON_MAX_CHARS:
+                return compact, True
+    return compact, truncated
 
 
 def _scan_coverage_for_prompt(resources: dict[str, Any]) -> str:
@@ -584,10 +701,20 @@ def node_retrieve_rules(state: AgentState) -> dict[str, Any]:
         category = _SECTION_CATEGORY.get(sec)
         if not category:
             continue
+        # Retrieve ALL CIS controls for this section (up to 50 per section)
+        # This ensures the LLM sees every control, not just top-k matches.
         query = f"OCI CIS section {sec} {category} security controls requirements"
-        rows = retriever.retrieve(query, top_k=5, category=category)
+        rows = retriever.retrieve(query, top_k=50, category=category)
         if rows:
             parts.append(format_retrieval_for_prompt(rows))
+        else:
+            # Fallback: try without category filter to catch any mis-categorized records
+            rows = retriever.retrieve(query, top_k=20, category=None)
+            if rows:
+                # Filter manually by section number prefix in cis_id
+                filtered = [r for r in rows if r.get("cis_id", "").startswith(f"{sec}.")]
+                if filtered:
+                    parts.append(format_retrieval_for_prompt(filtered))
     cis_rules = "\n\n".join(parts) if parts else "(No CIS OCI rules retrieved.)"
     max_chars = _CIS_MAX_CHARS_FULL_AUDIT if _is_full_audit_scope(sections) else _CIS_MAX_CHARS_PARTIAL_AUDIT
     cis_rules = _truncate_text(cis_rules, max_chars)
@@ -605,13 +732,38 @@ def node_analyze(state: AgentState, *, langfuse_config: dict[str, Any] | None = 
     inventory_json = json.dumps(compact, indent=2, default=str)
     coverage = _scan_coverage_for_prompt(resources)
 
-    llm = ChatGroq(model=GROQ_MODEL, temperature=0, groq_api_key=api_key, max_tokens=4000)
+    llm = ChatGroq(model=GROQ_MODEL, temperature=0, groq_api_key=api_key, max_tokens=3000)
     system = (
-        "You are an OCI Cloud Security Auditor aligned with the CIS Oracle Cloud Infrastructure Foundations Benchmark.\n"
-        "Compare the live OCI inventory JSON against the CIS benchmark excerpts.\n"
-        "For each relevant CIS control, output a verdict: Compliant / Non-Compliant / Not Assessed.\n"
-        "For Non-Compliant findings, include: CIS ID, title, risk, evidence from the inventory, and remediation steps.\n"
-        "Be concise and specific. Use Markdown headings per CIS section."
+        "You are an OCI Cloud Security Scanner. Your ONLY job is to detect and report security "
+        "risks (Non-Compliant findings) against the CIS Oracle Cloud Infrastructure Foundations Benchmark.\n\n"
+        "## Core Rule\n"
+        "**Only report Non-Compliant findings.** Skip Compliant and Not Assessed controls entirely.\n\n"
+        "## When to flag a finding (Non-Compliant)\n"
+        "Flag a control as Non-Compliant ONLY when the inventory explicitly shows a VIOLATION:\n"
+        "- `open_security_lists` contains items → flag CIS 2.x (open ports)\n"
+        "- `users_without_mfa` > 0 → flag CIS 1.7 (missing MFA)\n"
+        "- `public_buckets` contains items → flag CIS 5.x (public storage)\n"
+        "- A user has multiple active API keys → flag CIS 1.17\n"
+        "- A policy allows `0.0.0.0/0` ingress → flag CIS 2.x\n"
+        "- Any inventory list shows a security misconfiguration\n\n"
+        "## When NOT to flag\n"
+        "- If the inventory shows the control IS met (e.g. `users_without_mfa: 0`) → SKIP, do not report\n"
+        "- If the inventory lacks the data to make a determination → SKIP, do not report\n"
+        "- If the tool returned an error for that section → SKIP, do not report\n"
+        "- If you are unsure → SKIP. Never guess or assume a violation.\n\n"
+        "## Severity Classification\n"
+        "Assign severity based on impact:\n"
+        "- **High**: Direct exposure to internet (open ports, public buckets, no MFA, admin over-privilege)\n"
+        "- **Medium**: Weak configuration (password policy, unused credentials, missing logging)\n"
+        "- **Low**: Minor issues (missing tags, non-critical audit gaps)\n\n"
+        "## Output Format (only for Non-Compliant findings)\n"
+        "### CIS X.Y - Title\n"
+        "* Severity: High | Medium | Low\n"
+        "* Status: Non-Compliant\n"
+        "* Evidence: (specific inventory path and value proving the violation)\n"
+        "* Risk: (explain the security impact)\n"
+        "* Remediation: (specific steps from CIS benchmark)\n\n"
+        "CRITICAL: Only output findings that are Non-Compliant. Skip everything else."
     )
     user = (
         f"## CIS Sections in scope: {', '.join(sections) or 'all'}\n\n"
@@ -653,8 +805,8 @@ def node_report(state: AgentState) -> dict[str, Any]:
     sections = state.get("sections") or []
     notes = state.get("planner_notes") or ""
     header = (
-        "# OCI CIS Security Audit Report\n\n"
-        f"**CIS Sections:** {', '.join(sections) or 'all'}\n\n"
+        "# OCI CIS Security Scan Report — Non-Compliant Findings\n\n"
+        f"**CIS Sections scanned:** {', '.join(sections) or 'all'}\n\n"
         f"**MCP tools used:** {', '.join(tools_used) or 'none'}\n\n"
         f"**Planner notes:** {notes}\n\n"
         "---\n\n"

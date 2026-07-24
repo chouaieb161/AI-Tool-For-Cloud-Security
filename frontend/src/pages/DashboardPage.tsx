@@ -324,12 +324,12 @@ function FindingsTable({
   );
 }
 
-/* ─── Main Dashboard Component ─── */
-export default function DashboardPage() {
+/* ─── Main Dashboard Component (GCP/OCI agnostic) ─── */
+export default function DashboardPage({ cloudProvider = 'GCP' }: { cloudProvider?: 'GCP' | 'OCI' }) {
   const {
     project, dashboard, findings, scanHistory, findingsMatrix, remediationPlan, scanDiff,
     loading, error, reload,
-  } = useDashboard();
+  } = useDashboard(cloudProvider);
   const location = useLocation();
   const [scan, setScan] = useState<ScanStatus | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -410,7 +410,12 @@ export default function DashboardPage() {
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Security Command Center</p>
             <h2 className="text-3xl font-semibold text-slate-900">Security Dashboard</h2>
             <p className="text-slate-500 mt-1">
-              {project ? `Project: ${project.name} (${project.gcp_project_id})` : 'Overview of your GCP project security findings.'}
+              {project ? `Project: ${project.name} (${project.gcp_project_id})` : `Overview of your ${cloudProvider} project security findings.`}
+              <span className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                cloudProvider === 'OCI' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+              }`}>
+                {cloudProvider}
+              </span>
             </p>
           </div>
           <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600">

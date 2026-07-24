@@ -8,6 +8,7 @@ from app.api.routes.projects import router as projects_router
 from app.api.routes.scans import router as scans_router
 from app.api.routes.external import router as external_router
 from app.api.routes.admin import router as admin_router
+from app.api.routes.oci_scans import router as oci_scans_router
 
 
 api_router = APIRouter()
@@ -17,3 +18,4 @@ api_router.include_router(projects_router)
 api_router.include_router(scans_router)
 api_router.include_router(external_router)
 api_router.include_router(admin_router)
+api_router.include_router(oci_scans_router)

@@ -1,8 +1,8 @@
 ﻿import { useState, useRef, useEffect } from 'react';
 import { api } from '../api';
-import type { ChatMessage, ChatSession, Project } from '../api';
+import type { ChatMessage, ChatSession, CloudProvider, Project } from '../api';
 
-export function useChat() {
+export function useChat(cloudProvider: CloudProvider = 'GCP') {
   const [project, setProject] = useState<Project | null>(null);
   const [session, setSession] = useState<ChatSession | null>(null);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -19,11 +19,17 @@ export function useChat() {
     const initChat = async () => {
       try {
         let projects = await api.getProjects();
-        if (projects.length === 0) {
-          const newProj = await api.createProject("Demo GCP Project", "demo-gcp-001");
+        const matchingProjects = projects.filter((project) => (project.cloud_provider ?? 'GCP') === cloudProvider);
+        let activeProj = matchingProjects[0] ?? projects[0];
+        if (!activeProj) {
+          const newProj = await api.createProject(
+            cloudProvider === 'OCI' ? 'Demo OCI Project' : 'Demo GCP Project',
+            cloudProvider === 'OCI' ? 'demo-oci-001' : 'demo-gcp-001',
+            cloudProvider,
+          );
+          activeProj = newProj;
           projects = [newProj];
         }
-        const activeProj = projects[0];
         setProject(activeProj);
 
         // get existing sessions
@@ -44,7 +50,7 @@ export function useChat() {
     };
 
     initChat();
-  }, []);
+  }, [cloudProvider]);
 
   useEffect(() => {
     if (!session) return;

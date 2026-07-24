@@ -3,7 +3,7 @@ import { Send, FileText, CheckCircle2, Pin, PinOff, RefreshCw, Trash2, Plus, Pen
 import { useChat } from '../hooks/useChat';
 import { useMemory } from '../hooks/useMemory';
 
-export default function ChatPage() {
+export default function ChatPage({ cloudProvider = 'GCP' }: { cloudProvider?: 'GCP' | 'OCI' }) {
   const {
     project,
     session,
@@ -17,7 +17,7 @@ export default function ChatPage() {
     selectSession,
     updateMessage,
     deleteMessage
-  } = useChat();
+  } = useChat(cloudProvider);
   const [input, setInput] = useState('');
   const [editingMessageId, setEditingMessageId] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -62,7 +62,14 @@ export default function ChatPage() {
     <div className="flex flex-col h-[calc(100vh-4rem)]">
       <header className="mb-4">
         <h2 className="text-2xl font-bold text-slate-800">Security Agent</h2>
-        <p className="text-slate-500">Ask the GCP CIS agent for compliance and remediation guidance.</p>
+        <p className="text-slate-500">
+          Ask the {cloudProvider} CIS agent for compliance and remediation guidance.
+          <span className={`ml-2 inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+            cloudProvider === 'OCI' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+          }`}>
+            {cloudProvider}
+          </span>
+        </p>
       </header>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[240px_minmax(0,1fr)_320px]">

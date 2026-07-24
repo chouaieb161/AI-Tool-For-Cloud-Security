@@ -352,6 +352,32 @@ def delete_memory_note(db: Session, note: MemoryNote) -> None:
     db.delete(note)
 
 
+def _load_oci_agent_module() -> Any:
+    module_path = Path(__file__).resolve().parents[1] / "oci_agent" / "agent.py"
+    if not module_path.exists():
+        raise RuntimeError(f"OCI agent not found at {module_path}")
+
+    app_dir = Path(__file__).resolve().parents[1]
+    import_paths = [
+        app_dir / "oci_agent",
+        app_dir / "oci_agent" / "mcp",
+        app_dir / "oci_agent" / "rag",
+    ]
+    for p in import_paths:
+        p_str = str(p)
+        if p_str not in sys.path:
+            sys.path.insert(0, p_str)
+
+    spec = importlib.util.spec_from_file_location("oci_langgraph_agent", module_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load OCI agent module")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["oci_langgraph_agent"] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def generate_chat_response(
     db: Session,
     session: ChatSession,
@@ -371,6 +397,7 @@ def generate_chat_response(
     project = db.execute(
         select(Project).where(Project.id == session.project_id)
     ).scalar_one_or_none()
+    is_oci = project is not None and project.cloud_provider == "OCI"
     project_hint = project.gcp_project_id if project else str(session.project_id)
     history = _compact_history(messages)
     preference_note = None
@@ -397,8 +424,9 @@ def generate_chat_response(
             memories.append(note)
     memory_block = _format_memory_notes(memories)
     memory_section = f"\n\n{memory_block}\n" if memory_block else ""
+    provider_name = "OCI" if is_oci else "GCP"
     prompt = (
-        "You are a GCP security assistant. Always use MCP tool data for audit questions, "
+        f"You are a {provider_name} security assistant. Always use MCP tool data for audit questions, "
         "and retrieve CIS Benchmark guidance for recommendations. "
         "Answer in a ChatGPT-like tone with clear, step-by-step remediation guidance and cite CIS control IDs. "
         f"Use the recent conversation context below to remember the last {RECENT_DISCUSSION_LIMIT} discussions "
@@ -409,27 +437,35 @@ def generate_chat_response(
         f"User question: {user_content}\n"
     )
 
-    module = _load_gcp_agent_module()
-    run_audit = getattr(module, "run_audit", None)
-    if not callable(run_audit):
-        raise RuntimeError("GCP agent missing run_audit()")
+    if is_oci:
+        module = _load_oci_agent_module()
+        run_audit = getattr(module, "run_oci_audit", None)
+        if not callable(run_audit):
+            raise RuntimeError("OCI agent missing run_oci_audit()")
+        response = run_audit(prompt, stream_trace=False)
+    else:
+        module = _load_gcp_agent_module()
+        run_audit = getattr(module, "run_audit", None)
+        if not callable(run_audit):
+            raise RuntimeError("GCP agent missing run_audit()")
 
-    def memory_sink(payload: dict[str, Any]) -> None:
-        if project is None:
-            return
-        report = payload.get("report_markdown") or ""
-        summary = _summarize_for_memory(report)
-        if summary:
-            create_memory_note(
-                db,
-                project_id=project.id,
-                session_id=session.id,
-                kind="long_term",
-                content=summary,
-                source="assistant_summary",
-            )
+        def memory_sink(payload: dict[str, Any]) -> None:
+            if project is None:
+                return
+            report = payload.get("report_markdown") or ""
+            summary = _summarize_for_memory(report)
+            if summary:
+                create_memory_note(
+                    db,
+                    project_id=project.id,
+                    session_id=session.id,
+                    kind="long_term",
+                    content=summary,
+                    source="assistant_summary",
+                )
 
-    response = run_audit(prompt, memory_sink=memory_sink)
+        response = run_audit(prompt, memory_sink=memory_sink)
+
     citations = _extract_citations(response)
     steps = _extract_steps(response)
     return response, citations, steps

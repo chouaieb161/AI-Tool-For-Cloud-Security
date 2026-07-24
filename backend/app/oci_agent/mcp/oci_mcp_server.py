@@ -12,11 +12,18 @@ Tools:
   - get_oci_database_inventory   (CIS 6: DB systems, autonomous DBs)
   - get_oci_governance_inventory (CIS 7: tags, budgets, quotas)
   - get_oci_security_inventory   (CIS 8: Cloud Guard, vaults, keys, scanning)
+
+Fixes:
+  1. Singleton OCIClient — reuses SDK clients across tool calls (prevents throttling)
+  2. Auto-retry on 404 — retries transient errors once with 1s delay
+  3. Compartment iteration — scans all ACTIVE compartments, not just root
 """
 from __future__ import annotations
 
 import json
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +36,43 @@ mcp = FastMCP(
         "Use only list/get/read operations. No write or patch operations."
     ),
 )
+
+# =============================================================================
+# Singleton OCIClient (Fix 1: reuse SDK clients across tool calls)
+# =============================================================================
+_oci_client_instance: OCIClient | None = None
+_oci_client_lock = threading.Lock()
+_oci_client_kwargs: dict[str, Any] | None = None
+
+
+def _get_oci_client(**kwargs: Any) -> OCIClient:
+    """Return a shared OCIClient instance. Creates once, reuses forever."""
+    global _oci_client_instance, _oci_client_kwargs
+    if _oci_client_instance is None:
+        with _oci_client_lock:
+            if _oci_client_instance is None:
+                # Merge kwargs with current env for first creation
+                _oci_client_kwargs = {
+                    "config_file": kwargs.get("config_file") or os.environ.get("OCI_CONFIG_FILE"),
+                    "profile": kwargs.get("profile") or os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
+                    "tenancy_ocid": kwargs.get("tenancy_ocid") or os.environ.get("OCI_TENANCY_OCID"),
+                    "compartment_ocid": kwargs.get("compartment_ocid") or os.environ.get("OCI_COMPARTMENT_OCID"),
+                    "region": kwargs.get("region") or os.environ.get("OCI_REGION"),
+                }
+                _oci_client_instance = OCIClient(**_oci_client_kwargs)
+    return _oci_client_instance
+
+
+def _reset_oci_client() -> None:
+    """Reset singleton (useful for testing or config changes)."""
+    global _oci_client_instance, _oci_client_kwargs
+    _oci_client_instance = None
+    _oci_client_kwargs = None
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
 
 
 def _normalize_provider_scope(
@@ -53,18 +97,31 @@ def _error_payload(exc: BaseException, context: str) -> dict[str, Any]:
 
 
 def _safe_list(fn: Any, *args: Any, limit: int = 200, **kwargs: Any) -> list[Any]:
-    """Paginate an OCI SDK list_* call safely."""
-    items: list[Any] = []
-    try:
-        response = fn(*args, **kwargs)
-        items.extend(list(response.data) if hasattr(response, "data") else [])
-        while hasattr(response, "has_next_page") and response.has_next_page and len(items) < limit:
-            kwargs["page"] = response.next_page
+    """Paginate an OCI SDK list_* call safely with retry on transient errors (Fix 2)."""
+    import oci
+
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            items: list[Any] = []
             response = fn(*args, **kwargs)
             items.extend(list(response.data) if hasattr(response, "data") else [])
-    except Exception:
-        pass
-    return items[:limit]
+            while hasattr(response, "has_next_page") and response.has_next_page and len(items) < limit:
+                kwargs["page"] = response.next_page
+                response = fn(*args, **kwargs)
+                items.extend(list(response.data) if hasattr(response, "data") else [])
+            return items[:limit]
+        except oci.exceptions.ServiceError as e:
+            if e.status in (404, 429, 500, 503) and attempt < max_retries - 1:
+                time.sleep(1)  # backoff before retry
+                continue
+            raise
+        except Exception:
+            if attempt < max_retries - 1:
+                time.sleep(1)
+                continue
+            raise
+    return []
 
 
 def _to_dict(obj: Any) -> Any:
@@ -77,17 +134,78 @@ def _to_dict(obj: Any) -> Any:
         return [_to_dict(x) for x in obj]
     if isinstance(obj, dict):
         return {k: _to_dict(v) for k, v in obj.items()}
-    # OCI SDK models have attribute_names and to_dict
-    if hasattr(obj, "attribute_names"):
-        return {attr: _to_dict(getattr(obj, attr, None)) for attr in obj.attribute_names}
     if hasattr(obj, "to_dict"):
         try:
             return _to_dict(obj.to_dict())
         except Exception:
             pass
     if hasattr(obj, "__dict__"):
-        return {k: _to_dict(v) for k, v in vars(obj).items() if not k.startswith("_")}
+        ignore = {"swagger_types", "attribute_map"}
+        result = {}
+        for k, v in vars(obj).items():
+            if k in ignore or k.startswith("_"):
+                continue
+            result[k] = _to_dict(v)
+        if result:
+            return result
+        for k, v in vars(obj).items():
+            clean = k.lstrip("_")
+            if clean in ignore:
+                continue
+            if clean != k:
+                result[clean] = _to_dict(v)
+            elif k not in ignore:
+                result[k] = _to_dict(v)
+        return result
     return str(obj)
+
+
+def _discover_active_compartments(client: OCIClient) -> list[str]:
+    """(Fix 3) Return OCIDs of all ACTIVE compartments in the tenancy."""
+    import oci
+
+    try:
+        cfg = client._cfg()
+        identity = oci.identity.IdentityClient(cfg)
+        compartments = identity.list_compartments(
+            compartment_id=client.tenancy_ocid,
+            compartment_id_in_subtree=True,
+        ).data
+        return [c.id for c in compartments if c.lifecycle_state == "ACTIVE"]
+    except Exception:
+        # Fallback to just the default compartment
+        return [client.compartment_ocid] if client.compartment_ocid else []
+
+
+def _iterate_compartments(
+    client: OCIClient,
+    list_fn: Any,
+    list_kwargs: dict[str, Any],
+    limit: int = 200,
+) -> tuple[list[Any], list[dict[str, Any]]]:
+    """(Fix 3) Call list_fn across all ACTIVE compartments and merge results.
+
+    Returns (merged_items, errors).
+    """
+    compartments = _discover_active_compartments(client)
+    all_items: list[Any] = []
+    errors: list[dict[str, Any]] = []
+
+    for cid in compartments:
+        try:
+            kwargs = dict(list_kwargs)
+            kwargs["compartment_id"] = cid
+            items = _safe_list(list_fn, **kwargs, limit=limit)
+            all_items.extend(items)
+        except Exception as exc:
+            errors.append({"section": list_fn.__name__, "compartment": cid[:20], "error": str(exc)[:200]})
+
+    return all_items, errors
+
+
+# =============================================================================
+# OCIClient
+# =============================================================================
 
 
 class OCIClient:
@@ -212,7 +330,6 @@ class OCIClient:
                 if not mfa:
                     users_without_mfa.append({"user_id": u.id, "user_name": u.name})
             except Exception:
-                # If MFA listing not supported, skip
                 pass
 
         return {
@@ -243,36 +360,11 @@ class OCIClient:
         cfg = self._cfg()
         net = oci.core.VirtualNetworkClient(cfg)
         errors: list[dict[str, Any]] = []
-        vcns: list[Any] = []
-        subnets: list[Any] = []
-        security_lists: list[Any] = []
-        gateways: list[Any] = []
-        route_tables: list[Any] = []
-
-        try:
-            vcns = _safe_list(net.list_vcns, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "vcns", "error": str(exc)})
-
-        try:
-            subnets = _safe_list(net.list_subnets, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "subnets", "error": str(exc)})
-
-        try:
-            security_lists = _safe_list(net.list_security_lists, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "security_lists", "error": str(exc)})
-
-        try:
-            gateways = _safe_list(net.list_internet_gateways, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "internet_gateways", "error": str(exc)})
-
-        try:
-            route_tables = _safe_list(net.list_route_tables, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "route_tables", "error": str(exc)})
+        vcns, _ = _iterate_compartments(self, net.list_vcns, {})
+        subnets, _ = _iterate_compartments(self, net.list_subnets, {})
+        security_lists, _ = _iterate_compartments(self, net.list_security_lists, {})
+        gateways, _ = _iterate_compartments(self, net.list_internet_gateways, {})
+        route_tables, _ = _iterate_compartments(self, net.list_route_tables, {})
 
         # Flag security lists with 0.0.0.0/0 open ingress
         open_security_lists: list[dict[str, Any]] = []
@@ -313,22 +405,17 @@ class OCIClient:
 
         cfg = self._cfg()
         errors: list[dict[str, Any]] = []
-        log_groups: list[Any] = []
+        log_groups, _ = _iterate_compartments(self, oci.logging.LoggingManagementClient(cfg).list_log_groups, {})
         logs: list[Any] = []
-        alarms: list[Any] = []
-
-        try:
-            logging_client = oci.logging.LoggingManagementClient(cfg)
-            log_groups = _safe_list(logging_client.list_log_groups, compartment_id=self.compartment_ocid)
-            logs = _safe_list(logging_client.list_logs, log_group_id=log_groups[0].id if log_groups else "")
-        except Exception as exc:
-            errors.append({"section": "logs", "error": str(exc)})
-
-        try:
-            monitoring = oci.monitoring.MonitoringClient(cfg)
-            alarms = _safe_list(monitoring.list_alarms, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "alarms", "error": str(exc)})
+        for lg in log_groups[:10]:
+            try:
+                lg_dict = _to_dict(lg)
+                log_client = oci.logging.LoggingManagementClient(cfg)
+                lgs = _safe_list(log_client.list_logs, log_group_id=lg_dict.get("id"))
+                logs.extend(lgs)
+            except Exception as exc:
+                errors.append({"section": "logs", "error": str(exc)[:200]})
+        alarms, _ = _iterate_compartments(self, oci.monitoring.MonitoringClient(cfg).list_alarms, {})
 
         return {
             "cis_section": "Logging and Monitoring",
@@ -351,21 +438,9 @@ class OCIClient:
         cfg = self._cfg()
         compute = oci.core.ComputeClient(cfg)
         errors: list[dict[str, Any]] = []
-        instances: list[Any] = []
-        boot_volumes: list[Any] = []
+        instances, _ = _iterate_compartments(self, compute.list_instances, {})
+        boot_volumes, _ = _iterate_compartments(self, oci.core.BlockstorageClient(cfg).list_boot_volumes, {})
 
-        try:
-            instances = _safe_list(compute.list_instances, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "instances", "error": str(exc)})
-
-        try:
-            bv_client = oci.core.BlockstorageClient(cfg)
-            boot_volumes = _safe_list(bv_client.list_boot_volumes, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "boot_volumes", "error": str(exc)})
-
-        # Flag instances with public IPs / metadata issues
         instance_flags: list[dict[str, Any]] = []
         for inst in instances:
             inst_dict = _to_dict(inst)
@@ -409,11 +484,14 @@ class OCIClient:
 
         if namespace:
             try:
-                buckets = _safe_list(obj_storage.list_buckets, namespace_name=namespace, compartment_id=self.compartment_ocid)
+                buckets, _ = _iterate_compartments(
+                    self,
+                    lambda **kw: obj_storage.list_buckets(namespace_name=namespace, **kw),
+                    {},
+                )
             except Exception as exc:
                 errors.append({"section": "buckets", "error": str(exc)})
 
-        # Check each bucket for public access
         public_buckets: list[dict[str, Any]] = []
         for b in buckets:
             b_dict = _to_dict(b)
@@ -448,18 +526,8 @@ class OCIClient:
         cfg = self._cfg()
         db_client = oci.database.DatabaseClient(cfg)
         errors: list[dict[str, Any]] = []
-        db_systems: list[Any] = []
-        autonomous_dbs: list[Any] = []
-
-        try:
-            db_systems = _safe_list(db_client.list_db_systems, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "db_systems", "error": str(exc)})
-
-        try:
-            autonomous_dbs = _safe_list(db_client.list_autonomous_databases, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "autonomous_dbs", "error": str(exc)})
+        db_systems, _ = _iterate_compartments(self, db_client.list_db_systems, {})
+        autonomous_dbs, _ = _iterate_compartments(self, db_client.list_autonomous_databases, {})
 
         return {
             "cis_section": "Database",
@@ -516,27 +584,18 @@ class OCIClient:
         vaults: list[Any] = []
         keys: list[Any] = []
 
-        try:
-            cloud_guard = oci.cloud_guard.CloudGuardClient(cfg)
-            cloud_guard_problems = _safe_list(cloud_guard.list_problems, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "cloud_guard", "error": str(exc)})
+        cloud_guard_problems, _ = _iterate_compartments(self, oci.cloud_guard.CloudGuardClient(cfg).list_problems, {})
+        vaults, _ = _iterate_compartments(self, oci.key_management.KmsVaultClient(cfg).list_vaults, {})
 
-        try:
-            vault_client = oci.key_management.KmsVaultClient(cfg)
-            vaults = _safe_list(vault_client.list_vaults, compartment_id=self.compartment_ocid)
-        except Exception as exc:
-            errors.append({"section": "vaults", "error": str(exc)})
-
-        try:
-            for v in vaults[:10]:
-                v_dict = _to_dict(v)
+        for v in vaults[:10]:
+            v_dict = _to_dict(v)
+            try:
                 key_client = oci.key_management.KmsManagementClient(cfg, vault_id=v_dict.get("id"))
                 vkeys = _safe_list(key_client.list_keys)
                 for k in vkeys:
                     keys.append({"vault_id": v_dict.get("id"), **_to_dict(k)})
-        except Exception as exc:
-            errors.append({"section": "keys", "error": str(exc)})
+            except Exception as exc:
+                errors.append({"section": f"keys:vault_{v_dict.get('id', '?')[:20]}", "error": str(exc)[:200]})
 
         return {
             "cis_section": "Security",
@@ -553,7 +612,7 @@ class OCIClient:
         }
 
 
-# ---- MCP tool wrappers ----
+# ---- MCP tool wrappers (Fix 1: use singleton _get_oci_client) ----
 
 @mcp.tool(description="Fetch OCI identity and policy inventory for CIS analysis (CIS section 1).")
 def get_oci_identity_inventory(
@@ -564,7 +623,7 @@ def get_oci_identity_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_identity_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -580,7 +639,7 @@ def get_oci_network_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_network_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -596,7 +655,7 @@ def get_oci_logging_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_logging_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -612,7 +671,7 @@ def get_oci_compute_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_compute_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -628,7 +687,7 @@ def get_oci_storage_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_storage_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -644,7 +703,7 @@ def get_oci_database_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_database_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -660,7 +719,7 @@ def get_oci_governance_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_governance_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -676,7 +735,7 @@ def get_oci_security_inventory(
     region: str | None = None,
 ) -> str:
     try:
-        client = OCIClient(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
+        client = _get_oci_client(config_file=config_file, profile=profile, tenancy_ocid=tenancy_ocid, compartment_ocid=compartment_ocid, region=region)
         result = client.get_security_inventory()
         return json.dumps(result)
     except Exception as exc:
@@ -698,14 +757,35 @@ _OCI_TOOLS = {
 
 
 def call_oci_mcp_tool(name: str, arguments: dict[str, Any] | None = None) -> str:
-    """Call an OCI MCP tool in-process and return its JSON string result."""
+    """Call an OCI MCP tool in-process and return its JSON string result.
+
+    Retries once if the result contains errors (transient 404 throttling).
+    """
     fn = _OCI_TOOLS.get(name)
     if fn is None:
         return json.dumps(_error_payload(ValueError(f"Unknown OCI tool: {name}"), "call_oci_mcp_tool"))
+    
+    # First attempt
     try:
-        return fn(**(arguments or {}))
+        raw = fn(**(arguments or {}))
     except Exception as exc:
-        return json.dumps(_error_payload(exc, f"call_oci_mcp_tool:{name}"))
+        raw = json.dumps(_error_payload(exc, f"call_oci_mcp_tool:{name}"))
+    
+    # Check if result has errors — if so, retry once with fresh client
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict) and parsed.get("errors") and len(parsed["errors"]) > 0:
+            # Retry: reset singleton and call again
+            _reset_oci_client()
+            time.sleep(1.5)
+            try:
+                raw = fn(**(arguments or {}))
+            except Exception as exc:
+                raw = json.dumps(_error_payload(exc, f"call_oci_mcp_tool:{name} (retry)"))
+    except (json.JSONDecodeError, TypeError):
+        pass
+    
+    return raw
 
 
 if __name__ == "__main__":

@@ -1,22 +1,60 @@
-﻿import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
-import { LayoutDashboard, MessageSquare, KeyRound } from 'lucide-react';
+﻿import { useEffect, useState } from 'react';
+import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
+import { LayoutDashboard, MessageSquare, KeyRound, Cloud, Server } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
 import ChatPage from './pages/ChatPage';
 import SetupPage from './pages/SetupPage';
 import { useCredentials } from './hooks/useCredentials';
+import type { CloudProvider } from './api';
 
 function App() {
   const { status, loading } = useCredentials();
   const isConfigured = Boolean(status?.configured);
+  const [cloudProvider, setCloudProvider] = useState<CloudProvider>('GCP');
+
+  useEffect(() => {
+    if (status?.provider) {
+      setCloudProvider(status.provider);
+    }
+  }, [status?.provider]);
 
   return (
     <div className="flex h-screen bg-slate-50">
       {/* Sidebar */}
-      <aside className="w-64 bg-white border-r border-slate-200">
+      <aside className="w-64 bg-white border-r border-slate-200 flex flex-col">
         <div className="p-4 border-b border-slate-200">
           <h1 className="text-xl font-semibold text-slate-800">Cloud Security</h1>
         </div>
-        <nav className="p-4 space-y-2">
+
+        {/* Cloud Provider Toggle */}
+        <div className="p-4 border-b border-slate-200">
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+            <button
+              onClick={() => setCloudProvider('GCP')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-colors ${
+                cloudProvider === 'GCP'
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'bg-white text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              <Cloud size={14} />
+              GCP
+            </button>
+            <button
+              onClick={() => setCloudProvider('OCI')}
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2 text-xs font-medium transition-colors ${
+                cloudProvider === 'OCI'
+                  ? 'bg-red-50 text-red-700'
+                  : 'bg-white text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              <Server size={14} />
+              OCI
+            </button>
+          </div>
+        </div>
+
+        <nav className="p-4 space-y-2 flex-1">
           <NavLink
             to="/setup"
             className={({ isActive }) =>
@@ -51,6 +89,16 @@ function App() {
             Agent Chat
           </NavLink>
         </nav>
+
+        {/* Provider indicator at bottom */}
+        <div className="p-4 border-t border-slate-200">
+          <div className={`flex items-center gap-2 text-xs font-medium ${
+            cloudProvider === 'OCI' ? 'text-red-600' : 'text-blue-600'
+          }`}>
+            {cloudProvider === 'OCI' ? <Server size={14} /> : <Cloud size={14} />}
+            Active provider: {cloudProvider}
+          </div>
+        </div>
       </aside>
 
       {/* Main Content */}
@@ -63,11 +111,23 @@ function App() {
               <Route path="/setup" element={<SetupPage />} />
               <Route
                 path="/"
-                element={isConfigured ? <DashboardPage /> : <Navigate to="/setup" replace />}
+                element={
+                  isConfigured ? (
+                    <DashboardPage cloudProvider={cloudProvider} />
+                  ) : (
+                    <Navigate to="/setup" replace />
+                  )
+                }
               />
               <Route
                 path="/chat"
-                element={isConfigured ? <ChatPage /> : <Navigate to="/setup" replace />}
+                element={
+                  isConfigured ? (
+                    <ChatPage cloudProvider={cloudProvider} />
+                  ) : (
+                    <Navigate to="/setup" replace />
+                  )
+                }
               />
               <Route path="*" element={<Navigate to={isConfigured ? '/' : '/setup'} replace />} />
             </Routes>
