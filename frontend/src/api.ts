@@ -34,6 +34,8 @@ export interface Project {
   gcp_project_id: string;
   created_at: string;
   cloud_provider?: 'GCP' | 'OCI';
+  tenant_provider_id?: number;
+  organisation_id?: number;
 }
 
 export interface ChatSession {
@@ -133,6 +135,18 @@ export interface OCIDashboardData {
 }
 
 export type CloudProvider = 'GCP' | 'OCI';
+
+export interface TenantProvider {
+  id: number;
+  organisation_id: number;
+  provider_type: CloudProvider;
+  provider_label: string;
+  enabled: boolean;
+  focus_version: string;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
 
 export const api = {
   // ─── Projects ───
@@ -244,6 +258,38 @@ export const api = {
     const res = await apiClient.post<CredentialStatus>(`/credentials/upload?provider=${provider}`, form, {
       headers: { 'Content-Type': 'multipart/form-data' }
     });
+    return res.data;
+  },
+
+  // ─── Tenant Provider Management (multi-tenant) ───
+  getTenantProviders: async (params?: { organisation_id?: number; provider_type?: CloudProvider }) => {
+    const res = await apiClient.get<TenantProvider[]>('/admin/tenant-providers', { params });
+    return res.data;
+  },
+
+  createTenantProvider: async (data: {
+    organisation_id: number;
+    provider_type: CloudProvider;
+    provider_label: string;
+    focus_version: string;
+    enabled?: boolean;
+  }) => {
+    const res = await apiClient.post<TenantProvider>('/admin/tenant-providers', data);
+    return res.data;
+  },
+
+  storeProviderCredentials: async (providerId: number, data: {
+    credentials_json?: string;
+    config_content?: string;
+    private_key?: string;
+  }) => {
+    const res = await apiClient.put(`/admin/tenant-providers/${providerId}/credentials`, data);
+    return res.data;
+  },
+
+  triggerScheduler: async (providerId?: number) => {
+    const params = providerId ? { provider_id: providerId } : {};
+    const res = await apiClient.post<{ status: string; scan_ids: number[]; count: number }>('/admin/scheduler/run', null, { params });
     return res.data;
   },
 
