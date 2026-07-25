@@ -11,6 +11,7 @@ export interface DashboardData {
   findings_by_severity: Record<string, number>;
   compliance_percentage: number;
   latest_scan_id: number | null;
+  latest_completed_scan_id: number | null;
 }
 
 export interface Finding {
@@ -132,6 +133,7 @@ export interface OCIDashboardData {
   findings_by_severity: Record<string, number>;
   compliance_percentage: number;
   latest_scan_id: number | null;
+  latest_completed_scan_id: number | null;
 }
 
 export type CloudProvider = 'GCP' | 'OCI';

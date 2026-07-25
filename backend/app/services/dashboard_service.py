@@ -132,6 +132,7 @@ def get_dashboard_data(db: Session, project_id: int) -> dict:
         "findings_by_severity": findings_by_severity,
         "compliance_percentage": compliance_percentage,
         "latest_scan_id": latest_scan.id if latest_scan else None,
+        "latest_completed_scan_id": completed_scan.id if completed_scan else None,
     }
 
 
