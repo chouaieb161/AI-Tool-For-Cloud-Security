@@ -853,11 +853,14 @@ def node_memory_update(state: AgentState, memory_sink: MemorySink | None = None)
 
 def build_graph(
     *,
+    mcp_call: Callable[[str, dict[str, Any] | None], str] | None = None,
+    mcp_tool_catalog: dict[str, dict[str, Any]] | None = None,
     memory_sink: MemorySink | None = None,
     langfuse_config: dict[str, Any] | None = None,
 ) -> Any:
-    tool_catalog = _build_tool_catalog()
-    langchain_tools = _build_langchain_mcp_tools(tool_catalog=tool_catalog, mcp_call=call_oci_mcp_tool)
+    mcp_call_fn = mcp_call or call_oci_mcp_tool
+    tool_catalog = mcp_tool_catalog or _build_tool_catalog()
+    langchain_tools = _build_langchain_mcp_tools(tool_catalog=tool_catalog, mcp_call=mcp_call_fn)
 
     def _route(state: AgentState) -> str:
         return state.get("intent", "assist")
@@ -865,7 +868,7 @@ def build_graph(
     graph = StateGraph(AgentState)
     graph.add_node("route_intent", node_route_intent)
     graph.add_node("plan_tools", lambda s: node_plan_tools(s, tool_catalog=tool_catalog, langfuse_config=langfuse_config))
-    graph.add_node("fetch_resources", lambda s: node_fetch_resources(s, langchain_tools_by_name=langchain_tools, langfuse_config=langfuse_config, mcp_call=call_oci_mcp_tool))
+    graph.add_node("fetch_resources", lambda s: node_fetch_resources(s, langchain_tools_by_name=langchain_tools, langfuse_config=langfuse_config, mcp_call=mcp_call_fn))
     graph.add_node("retrieve_rules", node_retrieve_rules)
     graph.add_node("analyze", lambda s: node_analyze(s, langfuse_config=langfuse_config))
     graph.add_node("structure_findings", lambda s: node_structure_findings(s, langfuse_config=langfuse_config))
@@ -886,10 +889,17 @@ def build_graph(
     return graph.compile()
 
 
-def run_oci_audit(user_prompt: str, *, stream_trace: bool = True, memory_sink: MemorySink | None = None) -> str:
+def run_oci_audit(
+    user_prompt: str,
+    *,
+    stream_trace: bool = True,
+    memory_sink: MemorySink | None = None,
+    mcp_call: Callable[[str, dict[str, Any] | None], str] | None = None,
+    mcp_tool_catalog: dict[str, dict[str, Any]] | None = None,
+) -> str:
     configure_quiet_runtime()
     langfuse_config = _make_langfuse_config()
-    app = build_graph(memory_sink=memory_sink, langfuse_config=langfuse_config)
+    app = build_graph(mcp_call=mcp_call, mcp_tool_catalog=mcp_tool_catalog, memory_sink=memory_sink, langfuse_config=langfuse_config)
     return _stream_audit(app, user_prompt, stream_trace=stream_trace, langfuse_config=langfuse_config)
 
 

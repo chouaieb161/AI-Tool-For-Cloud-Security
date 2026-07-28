@@ -31,6 +31,12 @@ class TenantProviderCreate(BaseModel):
     secret_refs: dict = Field(default_factory=dict)
 
 
+class TenantProviderCredentials(BaseModel):
+    credentials_json: str | None = None
+    config_content: str | None = None
+    private_key: str | None = None
+
+
 class TenantProviderUpdate(BaseModel):
     provider_label: str | None = None
     enabled: bool | None = None

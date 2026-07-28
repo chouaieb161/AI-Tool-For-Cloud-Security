@@ -15,9 +15,11 @@ from app.schemas.external import (
     OrganizationCreate,
     OrganizationResponse,
     TenantProviderCreate,
+    TenantProviderCredentials,
     TenantProviderResponse,
     TenantProviderUpdate,
 )
+from app.services.scheduler_service import run_scheduled_scans
 from app.services.tenant_service import (
     create_organisation,
     create_tenant_provider,
@@ -27,6 +29,7 @@ from app.services.tenant_service import (
     get_tenant_provider_by_id,
     list_organisations,
     list_tenant_providers,
+    store_tenant_provider_credentials,
     toggle_tenant_provider,
     update_tenant_provider,
 )
@@ -210,3 +213,41 @@ def delete_provider(provider_id: int, db: Session = Depends(get_db)):
     delete_tenant_provider(db, provider)
     db.commit()
     return None
+
+
+@router.put("/tenant-providers/{provider_id}/credentials", status_code=status.HTTP_200_OK)
+def store_credentials(
+    provider_id: int,
+    payload: TenantProviderCredentials,
+    db: Session = Depends(get_db),
+):
+    provider = get_tenant_provider_by_id(db, provider_id)
+    if provider is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Tenant provider not found")
+
+    if not payload.credentials_json and not payload.config_content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Provide credentials_json (GCP) or config_content + private_key (OCI)",
+        )
+
+    store_tenant_provider_credentials(
+        db,
+        provider,
+        credentials_json=payload.credentials_json,
+        config_content=payload.config_content,
+        private_key=payload.private_key,
+    )
+    db.commit()
+    db.refresh(provider)
+    return {"status": "ok", "provider_id": provider.id, "provider_type": provider.provider_type}
+
+
+@router.post("/scheduler/run", status_code=status.HTTP_200_OK)
+def trigger_scheduled_scans(
+    provider_id: int | None = Query(None, description="Optional specific provider ID to scan"),
+    db: Session = Depends(get_db),
+):
+    """Run scans for all enabled TenantProviders with stored credentials."""
+    scan_ids = run_scheduled_scans(db, provider_id=provider_id, trigger_type="scheduled")
+    return {"status": "ok", "scan_ids": scan_ids, "count": len(scan_ids)}

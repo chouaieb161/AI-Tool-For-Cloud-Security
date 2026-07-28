@@ -155,25 +155,29 @@ class GCPClient:
     def __init__(
         self,
         credentials_path: str | None = None,
+        credentials_info: dict | None = None,
         project_id: str | None = None,
         audit_scope: str | None = None,
         organization_id: str | None = None,
         folder_id: str | None = None,
     ) -> None:
-        path = credentials_path or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-        if not path:
-            raise ValueError(
-                "Set GOOGLE_APPLICATION_CREDENTIALS or pass credentials_path "
-                "to point at service_account.json"
-            )
-        if not os.path.isfile(path):
-            raise FileNotFoundError(f"Service account file not found: {path}")
-
-        self._credentials_path = path
-        self.credentials = service_account.Credentials.from_service_account_file(path)
-
-        with open(path, encoding="utf-8") as f:
-            sa = json.load(f)
+        if credentials_info is not None:
+            self._credentials_path = None
+            self.credentials = service_account.Credentials.from_service_account_info(credentials_info)
+            sa = credentials_info
+        else:
+            path = credentials_path or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+            if not path:
+                raise ValueError(
+                    "Set GOOGLE_APPLICATION_CREDENTIALS or pass credentials_path "
+                    "to point at service_account.json"
+                )
+            if not os.path.isfile(path):
+                raise FileNotFoundError(f"Service account file not found: {path}")
+            self._credentials_path = path
+            self.credentials = service_account.Credentials.from_service_account_file(path)
+            with open(path, encoding="utf-8") as f:
+                sa = json.load(f)
         self.project_id = (
             project_id
             or os.environ.get("GCP_PROJECT_ID")
