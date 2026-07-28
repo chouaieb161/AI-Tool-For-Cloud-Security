@@ -12,7 +12,8 @@ from sqlalchemy import desc, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.db.models import ChatMessage, ChatSession, MemoryNote, Project
+from app.db.models import ChatMessage, ChatSession, Finding, MemoryNote, Project, Scan, ScanStatus, Severity
+from app.services.dashboard_service import get_dashboard_data, _get_latest_completed_scan
 
 
 def _dump_json(value: Any) -> str | None:
@@ -425,13 +426,40 @@ def generate_chat_response(
     memory_block = _format_memory_notes(memories)
     memory_section = f"\n\n{memory_block}\n" if memory_block else ""
     provider_name = "OCI" if is_oci else "GCP"
+    scan_context = ""
+    if project is not None:
+        completed = _get_latest_completed_scan(db, project.id)
+        if completed is not None:
+            score = completed.score
+            findings = db.execute(
+                select(Finding).where(Finding.scan_id == completed.id)
+            ).scalars().all()
+            by_severity: dict[str, int] = {}
+            for f in findings:
+                by_severity[f.severity.value] = by_severity.get(f.severity.value, 0) + 1
+            top = sorted(findings, key=lambda x: {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}.get(x.severity.value, 4))[:10]
+            lines = [
+                f"Latest completed scan (ID {completed.id}): score = {score}%, {len(findings)} total findings."
+            ]
+            for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+                c = by_severity.get(sev, 0)
+                if c:
+                    lines.append(f"  {sev}: {c}")
+            lines.append("Top findings by severity:")
+            for f in top:
+                lines.append(f"  - [{f.severity.value}] {f.cis_rule_id}: {f.description[:120]}")
+            scan_context = "\n".join(lines) + "\n\n"
+
     prompt = (
         f"You are a {provider_name} security assistant. Always use MCP tool data for audit questions, "
         "and retrieve CIS Benchmark guidance for recommendations. "
         "Answer in a ChatGPT-like tone with clear, step-by-step remediation guidance and cite CIS control IDs. "
+        "When the user asks about scan results, reference the actual findings data provided below "
+        "and give specific, actionable recommendations tied to those findings.\n"
         f"Use the recent conversation context below to remember the last {RECENT_DISCUSSION_LIMIT} discussions "
         "in this chat session, including your own previous answers.\n\n"
         f"Project ID: {project_hint}\n\n"
+        f"{scan_context}"
         f"{memory_section}"
         f"Conversation:\n{history}\n\n"
         f"User question: {user_content}\n"
