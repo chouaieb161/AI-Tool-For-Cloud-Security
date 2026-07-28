@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Routes, Route, NavLink, Navigate } from 'react-router-dom';
 import { LayoutDashboard, MessageSquare, KeyRound, Cloud, Server } from 'lucide-react';
 import DashboardPage from './pages/DashboardPage';
@@ -11,14 +11,20 @@ function App() {
   const [providers, setProviders] = useState<TenantProvider[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<number | null>(null);
 
-  useEffect(() => {
+  const refreshProviders = useCallback(() => {
     api.getTenantProviders().then((list) => {
       setProviders(list);
       if (list.length > 0 && selectedProviderId === null) {
         setSelectedProviderId(list[0].id);
+      } else if (list.length === 0) {
+        setSelectedProviderId(null);
       }
     }).catch(() => {});
-  }, []);
+  }, [selectedProviderId]);
+
+  useEffect(() => {
+    refreshProviders();
+  }, [refreshProviders]);
 
   const selectedProvider = providers.find((p) => p.id === selectedProviderId);
   const cloudProvider: CloudProvider = selectedProvider?.provider_type ?? 'GCP';
@@ -49,6 +55,7 @@ function App() {
           <NavLink
             to="/"
             end
+            onClick={() => refreshProviders()}
             className={({ isActive }) =>
               `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 isActive ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50'
@@ -61,6 +68,7 @@ function App() {
 
           <NavLink
             to="/chat"
+            onClick={() => refreshProviders()}
             className={({ isActive }) =>
               `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 isActive ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:bg-slate-50'
@@ -98,7 +106,7 @@ function App() {
         <Routes>
           <Route path="/" element={<DashboardPage cloudProvider={cloudProvider} />} />
           <Route path="/chat" element={<ChatPage cloudProvider={cloudProvider} />} />
-          <Route path="/setup" element={<SetupPage />} />
+          <Route path="/setup" element={<SetupPage onProviderChange={refreshProviders} />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

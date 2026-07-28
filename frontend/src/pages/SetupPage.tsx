@@ -4,7 +4,11 @@ import { UploadCloud, ShieldCheck, PlayCircle, Cloud, Server, Plus } from 'lucid
 import { api } from '../api';
 import type { CloudProvider, TenantProvider } from '../api';
 
-export default function SetupPage() {
+interface SetupPageProps {
+  onProviderChange?: () => void;
+}
+
+export default function SetupPage({ onProviderChange }: SetupPageProps) {
   const navigate = useNavigate();
   const [providers, setProviders] = useState<TenantProvider[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(true);
@@ -84,6 +88,7 @@ export default function SetupPage() {
       setOciConfigText('');
       setOciPrivateKeyText('');
       await loadData();
+      onProviderChange?.();
     } catch (err: any) {
       const msg = err?.response?.data?.detail || err?.message || 'Failed to save provider.';
       setError(msg);
