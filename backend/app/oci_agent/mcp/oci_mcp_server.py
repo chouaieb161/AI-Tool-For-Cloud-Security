@@ -24,6 +24,7 @@ import json
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +55,8 @@ def _get_oci_client(**kwargs: Any) -> OCIClient:
                 # Merge kwargs with current env for first creation
                 _oci_client_kwargs = {
                     "config_file": kwargs.get("config_file") or os.environ.get("OCI_CONFIG_FILE"),
+                    "config_content": kwargs.get("config_content"),
+                    "key_content": kwargs.get("key_content"),
                     "profile": kwargs.get("profile") or os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT"),
                     "tenancy_ocid": kwargs.get("tenancy_ocid") or os.environ.get("OCI_TENANCY_OCID"),
                     "compartment_ocid": kwargs.get("compartment_ocid") or os.environ.get("OCI_COMPARTMENT_OCID"),
@@ -214,25 +217,57 @@ class OCIClient:
     def __init__(
         self,
         config_file: str | None = None,
+        config_content: str | None = None,
+        key_content: str | None = None,
         profile: str | None = None,
         tenancy_ocid: str | None = None,
         compartment_ocid: str | None = None,
         region: str | None = None,
     ) -> None:
-        self.config_file = config_file or os.environ.get("OCI_CONFIG_FILE")
         self.profile = profile or os.environ.get("OCI_CONFIG_PROFILE", "DEFAULT")
         self.tenancy_ocid = tenancy_ocid or os.environ.get("OCI_TENANCY_OCID")
         self.compartment_ocid = compartment_ocid or os.environ.get("OCI_COMPARTMENT_OCID")
         self.region = region or os.environ.get("OCI_REGION")
 
-        if not self.config_file:
-            raise ValueError(
-                "Set OCI_CONFIG_FILE or pass config_file path to initialize OCI client."
-            )
-        self.config_file = str(Path(self.config_file).expanduser().resolve())
+        if config_content is not None:
+            import configparser
+            import tempfile
 
-        if not os.path.exists(self.config_file):
-            raise FileNotFoundError(f"OCI config file not found: {self.config_file}")
+            tmp_dir = Path(tempfile.gettempdir()) / "oci_creds"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+
+            suffix = uuid.uuid4().hex[:8]
+            tmp_config = tmp_dir / f"config_{suffix}"
+            tmp_key = tmp_dir / f"key_{suffix}.pem" if key_content else None
+
+            if tmp_key is not None:
+                tmp_key.write_text(key_content, encoding="utf-8")
+                parser = configparser.ConfigParser()
+                parser.read_string(config_content)
+                for section in parser.sections():
+                    if parser.has_option(section, "key_file"):
+                        parser.set(section, "key_file", str(tmp_key))
+                with open(tmp_config, "w", encoding="utf-8") as f:
+                    parser.write(f)
+            else:
+                tmp_config.write_text(config_content, encoding="utf-8")
+
+            self.config_file = str(tmp_config)
+            self._temp_config = tmp_config
+            self._temp_key = tmp_key
+        else:
+            self.config_file = config_file or os.environ.get("OCI_CONFIG_FILE")
+            self._temp_config = None
+            self._temp_key = None
+
+            if not self.config_file:
+                raise ValueError(
+                    "Set OCI_CONFIG_FILE or pass config_file path to initialize OCI client."
+                )
+            self.config_file = str(Path(self.config_file).expanduser().resolve())
+
+            if not os.path.exists(self.config_file):
+                raise FileNotFoundError(f"OCI config file not found: {self.config_file}")
 
         # Resolve tenancy from config if not provided
         if not self.tenancy_ocid:

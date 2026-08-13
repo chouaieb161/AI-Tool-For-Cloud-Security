@@ -111,6 +111,26 @@ def delete_tenant_provider(db: Session, provider: TenantProvider) -> None:
     db.delete(provider)
 
 
+def store_tenant_provider_credentials(
+    db: Session,
+    provider: TenantProvider,
+    *,
+    credentials_json: str | None = None,
+    config_content: str | None = None,
+    private_key: str | None = None,
+) -> TenantProvider:
+    config = dict(provider.config or {})
+    if credentials_json is not None:
+        config["credentials_json"] = credentials_json
+    if config_content is not None:
+        config["config_content"] = config_content
+    if private_key is not None:
+        config["private_key"] = private_key
+    provider.config = config
+    db.flush()
+    return provider
+
+
 # ─── External trigger logic ───
 
 class OrganisationNotFoundError(Exception):

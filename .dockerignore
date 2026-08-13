@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.venv
+venv
+
+# Env / secrets (excluded from image; mounted at runtime)
+.env
+.env.example
+*.pem
+*.key
+backend/app/credentials/
+
+# Test artifacts
+test.db
+test_*.db
+.benchmarks
+backend/tests
+
+# Frontend build artifacts
+frontend/node_modules
+frontend/dist
+
+# CI/CIS source PDFs (large, not needed at runtime)
+backend/app/rag/cis_pdf
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode
+.idea

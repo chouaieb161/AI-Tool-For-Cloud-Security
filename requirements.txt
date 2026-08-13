@@ -1,5 +1,5 @@
 # MCP & agent
-mcp>=1.0.0
+mcp>=1.0.0,<2.0.0
 langgraph>=0.2.0
 langchain>=0.3.0
 langchain-core>=0.3.0
@@ -11,6 +11,12 @@ sentence-transformers>=2.2.0
 python-dotenv>=1.0.0
 langfuse>=2.0.0
 typing-extensions>=4.8.0
+
+# RAG evaluation (RAGAS) - used by `python -m app.rag.ragas_eval`
+# Pinned: the deprecated `evaluate()` + legacy metrics API is used; the metrics
+# API changed in later releases (new collections-based metrics require the
+# `@experiment` framework instead of `evaluate()`).
+ragas==0.4.3
 
 # RAG / CIS knowledge base
 chromadb>=0.4.0

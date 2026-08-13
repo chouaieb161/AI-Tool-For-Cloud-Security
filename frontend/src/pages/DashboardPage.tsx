@@ -359,9 +359,9 @@ export default function DashboardPage({ cloudProvider = 'GCP' }: { cloudProvider
 
   useEffect(() => {
     if (!scanId || !scan || scan.status !== 'COMPLETED') return;
-    if (dashboard?.latest_scan_id === scanId) return;
+    if (dashboard?.latest_completed_scan_id === scanId) return;
     reload();
-  }, [scanId, scan, dashboard?.latest_scan_id, reload]);
+  }, [scanId, scan, dashboard?.latest_completed_scan_id, dashboard?.latest_scan_id, reload]);
 
   useEffect(() => {
     if (!selectedFinding) return;

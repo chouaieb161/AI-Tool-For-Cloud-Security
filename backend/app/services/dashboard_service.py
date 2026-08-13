@@ -58,18 +58,30 @@ def get_latest_scan(db: Session, project_id: int) -> Scan | None:
     ).scalar_one_or_none()
 
 
+def _get_latest_completed_scan(db: Session, project_id: int) -> Scan | None:
+    """Return the most recent COMPLETED scan for this project."""
+    return db.execute(
+        select(Scan)
+        .where(Scan.project_id == project_id, Scan.status == ScanStatus.COMPLETED)
+        .order_by(Scan.timestamp.desc(), Scan.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+
+
 def get_dashboard_data(db: Session, project_id: int) -> dict:
     latest_scan = get_latest_scan(db, project_id)
+    completed_scan = _get_latest_completed_scan(db, project_id)
     findings_by_severity = {severity.value: 0 for severity in Severity}
     resource_count_basis = "no_scan"
     total_resources = 0
 
-    if latest_scan and latest_scan.status == ScanStatus.COMPLETED:
+    source = completed_scan if completed_scan else latest_scan
+    if source and source.status == ScanStatus.COMPLETED:
         latest_scan_resources = db.execute(
             select(func.count(ScanResource.resource_id))
             .join(Resource, Resource.id == ScanResource.resource_id)
             .where(
-                ScanResource.scan_id == latest_scan.id,
+                ScanResource.scan_id == source.id,
                 Resource.type != "PROJECT",
             )
         ).scalar_one()
@@ -90,14 +102,14 @@ def get_dashboard_data(db: Session, project_id: int) -> dict:
 
         severity_rows = db.execute(
             select(Finding.severity, func.count(Finding.id))
-            .where(Finding.scan_id == latest_scan.id)
+            .where(Finding.scan_id == source.id)
             .group_by(Finding.severity)
         ).all()
         for severity, count in severity_rows:
             findings_by_severity[severity.value] = int(count)
 
-        risk_score = int(latest_scan.score)
-        compliance_percentage = float(latest_scan.score)
+        risk_score = int(source.score)
+        compliance_percentage = float(source.score)
     else:
         total_resources = int(
             db.execute(
@@ -120,6 +132,7 @@ def get_dashboard_data(db: Session, project_id: int) -> dict:
         "findings_by_severity": findings_by_severity,
         "compliance_percentage": compliance_percentage,
         "latest_scan_id": latest_scan.id if latest_scan else None,
+        "latest_completed_scan_id": completed_scan.id if completed_scan else None,
     }
 
 

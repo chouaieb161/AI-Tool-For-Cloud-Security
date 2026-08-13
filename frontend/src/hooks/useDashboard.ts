@@ -72,17 +72,18 @@ export function useDashboard(cloudProvider: CloudProvider = 'GCP') {
 
   useEffect(() => {
     const loadFindings = async () => {
-      if (!dashboard?.latest_scan_id) {
+      const scanId = dashboard?.latest_completed_scan_id ?? dashboard?.latest_scan_id;
+      if (!scanId) {
         setFindings([]);
         return;
       }
       try {
         if (isOCI) {
-          const scanResult = await api.getOCIScanFindings(dashboard.latest_scan_id);
+          const scanResult = await api.getOCIScanFindings(scanId);
           // Convert OCI findings to the standard Finding format
           const converted: Finding[] = scanResult.findings.map((f, idx) => ({
             id: idx,
-            scan_id: dashboard.latest_scan_id!,
+            scan_id: scanId,
             resource_id: null,
             resource_name: null,
             resource_type: null,
@@ -96,7 +97,7 @@ export function useDashboard(cloudProvider: CloudProvider = 'GCP') {
           }));
           setFindings(converted);
         } else {
-          const scanFindings = await api.getFindings(dashboard.latest_scan_id);
+          const scanFindings = await api.getFindings(scanId);
           setFindings(scanFindings);
         }
       } catch (err) {
@@ -105,7 +106,7 @@ export function useDashboard(cloudProvider: CloudProvider = 'GCP') {
     };
 
     loadFindings();
-  }, [dashboard?.latest_scan_id, isOCI]);
+  }, [dashboard?.latest_completed_scan_id, dashboard?.latest_scan_id, isOCI]);
 
   // Load scan diff when we have at least 2 scans in history
   useEffect(() => {

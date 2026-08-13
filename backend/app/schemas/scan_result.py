@@ -58,6 +58,7 @@ class DashboardResponse(BaseModel):
     findings_by_severity: dict[str, int]
     compliance_percentage: float
     latest_scan_id: int | None = None
+    latest_completed_scan_id: int | None = None
 
 
 class FindingResponse(BaseModel):
