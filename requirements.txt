@@ -12,6 +12,12 @@ python-dotenv>=1.0.0
 langfuse>=2.0.0
 typing-extensions>=4.8.0
 
+# RAG evaluation (RAGAS) - used by `python -m app.rag.ragas_eval`
+# Pinned: the deprecated `evaluate()` + legacy metrics API is used; the metrics
+# API changed in later releases (new collections-based metrics require the
+# `@experiment` framework instead of `evaluate()`).
+ragas==0.4.3
+
 # RAG / CIS knowledge base
 chromadb>=0.4.0
 pypdf>=4.0.0

@@ -31,6 +31,11 @@ dist-ssr/
 .chroma_cis/
 chroma_cis/
 
+# Local/test artifacts
+*.db
+test_*.py
+*.pem
+
 # Logs
 logs/
 *.log
