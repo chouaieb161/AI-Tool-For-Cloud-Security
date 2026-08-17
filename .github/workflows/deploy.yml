@@ -50,8 +50,6 @@ jobs:
           containerAppName: ${{ env.BACKEND_APP }}
           containerAppEnvironment: ${{ env.CONTAINER_APP_ENV }}
           targetPort: 8000
-          minReplicas: 0
-          maxReplicas: 1
           ingress: external
           environmentVariables: |
             GCP_AGENT_RUNNER=real
@@ -100,6 +98,5 @@ jobs:
           containerAppName: ${{ env.FRONTEND_APP }}
           containerAppEnvironment: ${{ env.CONTAINER_APP_ENV }}
           targetPort: 80
-          minReplicas: 0
-          maxReplicas: 1
           ingress: external
+
