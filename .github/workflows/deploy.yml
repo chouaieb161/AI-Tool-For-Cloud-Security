@@ -43,8 +43,9 @@ jobs:
       - name: Deploy backend to Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
-          appSourcePath: .
           acrName: ${{ env.ACR_NAME }}
+          acrUsername: ${{ secrets.ACR_USERNAME }}
+          acrPassword: ${{ secrets.ACR_PASSWORD }}
           imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:latest
           resourceGroup: ${{ env.RESOURCE_GROUP }}
           containerAppName: ${{ env.BACKEND_APP }}
@@ -91,8 +92,9 @@ jobs:
       - name: Deploy frontend to Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
-          appSourcePath: .
           acrName: ${{ env.ACR_NAME }}
+          acrUsername: ${{ secrets.ACR_USERNAME }}
+          acrPassword: ${{ secrets.ACR_PASSWORD }}
           imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:latest
           resourceGroup: ${{ env.RESOURCE_GROUP }}
           containerAppName: ${{ env.FRONTEND_APP }}
