@@ -1,0 +1,11 @@
+{
+  "navigationFallback": {
+    "rewrite": "/index.html",
+    "exclude": ["/static/*", "*.{png,jpg,gif,svg,ico,woff,woff2,ttf,eot}"]
+  },
+  "mimeTypes": {
+    ".json": "text/json",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2"
+  }
+}

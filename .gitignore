@@ -36,6 +36,9 @@ chroma_cis/
 test_*.py
 *.pem
 
+# DB migration dump (contains cloud credentials)
+migrate/
+
 # Logs
 logs/
 *.log

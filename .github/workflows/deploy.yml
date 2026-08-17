@@ -1,0 +1,80 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  ACR_NAME: ${{ secrets.ACR_NAME }}
+  IMAGE_NAME: ai-tool-for-cloud-security-backend
+  CONTAINER_APP_NAME: ai-security-api
+  RESOURCE_GROUP: rg-ai-security
+  CONTAINER_APP_ENV: cae-ai-security
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push backend image
+        run: |
+          docker build -f backend/Dockerfile \
+            -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+            --build-arg HF_TOKEN=${{ secrets.HF_TOKEN }} .
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+
+      - name: Deploy backend to Container Apps
+        uses: azure/container-apps-deploy@v1
+        with:
+          appSourcePath: .
+          acrName: ${{ env.ACR_NAME }}
+          imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          containerAppName: ${{ env.CONTAINER_APP_NAME }}
+          containerAppEnvironment: ${{ env.CONTAINER_APP_ENV }}
+          targetPort: 8000
+          minReplicas: 0
+          maxReplicas: 1
+          ingress: external
+          environmentVariables: |
+            GCP_AGENT_RUNNER=real
+            CHROMA_CIS_PATH=/data/chroma_cis
+            CIS_EMBED_DEVICE=cpu
+            CIS_ENABLE_RERANK=0
+            GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
+            GCP_AUDIT_SCOPE=${{ secrets.GCP_AUDIT_SCOPE }}
+            OCI_SUPABASE_URL=${{ secrets.OCI_SUPABASE_URL }}
+            OCI_SUPABASE_KEY=${{ secrets.OCI_SUPABASE_KEY }}
+            OCI_VECTOR_STORE=${{ secrets.OCI_VECTOR_STORE }}
+            DATABASE_URL=${{ secrets.DATABASE_URL }}
+
+  frontend:
+    runs-on: ubuntu-latest
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Azure Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          action: "upload"
+          app_location: "frontend"
+          app_build_command: "npm ci && echo \"VITE_API_URL=https://${{ env.CONTAINER_APP_NAME }}.azurecontainerapps.io\" >> .env.production && npm run build"
+          api_location: ""
+          output_location: "dist"

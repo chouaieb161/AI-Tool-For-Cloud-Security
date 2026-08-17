@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+# Optional token for gated HuggingFace models
+ARG HF_TOKEN=""
+
 # System deps for sentence-transformers, chromadb, and google-cloud clients
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -14,6 +17,9 @@ COPY requirements.txt .
 # Install CPU-only torch first (avoids ~2GB of CUDA libs)
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Pre-download the embedding model so cold starts don't fetch it from HuggingFace
+RUN HF_TOKEN=${HF_TOKEN} python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-large-en-v1.5', device='cpu')"
 
 # Copy the FastAPI app and CIS OCI rules
 COPY backend/app ./app

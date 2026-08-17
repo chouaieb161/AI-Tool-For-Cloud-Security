@@ -1,27 +1,11 @@
 services:
-  db:
-    image: postgres:16
-    container_name: cloud-security-db
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123
-      POSTGRES_DB: cloud-security
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d cloud-security"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    restart: unless-stopped
-
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
     container_name: cloud-security-api
     environment:
-      DATABASE_URL: postgresql+psycopg2://postgres:123@db:5432/cloud-security
+      DATABASE_URL: postgresql+psycopg2://postgres.ichzwwviywvhioqtoolj:Chouaieb%402026@aws-1-eu-central-2.pooler.supabase.com:5432/postgres?sslmode=require
       GCP_AGENT_RUNNER: real
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       GOOGLE_APPLICATION_CREDENTIALS: /app/credentials/fldr-network-prj-ba77-a45d5a5801b1.json
@@ -29,14 +13,14 @@ services:
       CHROMA_CIS_PATH: /data/chroma_cis
       CIS_EMBED_DEVICE: cpu
       CIS_ENABLE_RERANK: 0
+      OCI_SUPABASE_URL: ${OCI_SUPABASE_URL:-}
+      OCI_SUPABASE_KEY: ${OCI_SUPABASE_KEY:-}
+      OCI_VECTOR_STORE: ${OCI_VECTOR_STORE:-}
     volumes:
       - ./fldr-network-prj-ba77-a45d5a5801b1.json:/app/credentials/fldr-network-prj-ba77-a45d5a5801b1.json:ro
       - chroma:/data/chroma_cis
     ports:
       - "8000:8000"
-    depends_on:
-      db:
-        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -51,5 +35,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
   chroma:
