@@ -88,6 +88,6 @@ jobs:
           resourceGroup: ${{ env.RESOURCE_GROUP }}
           containerAppName: ${{ env.FRONTEND_APP }}
           containerAppEnvironment: ${{ env.CONTAINER_APP_ENV }}
-          targetPort: 80
+          targetPort: 8080
           ingress: external
 
