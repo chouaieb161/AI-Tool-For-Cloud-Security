@@ -17,7 +17,7 @@ def create_app() -> FastAPI:
             "http://localhost:5173",
             "http://localhost:8081",
         ],
-        allow_origin_regex=r"https://.*\.azurestaticapps\.net",
+        allow_origin_regex=r"https://.*\.(azurestaticapps\.net|azurecontainerapps\.io)",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

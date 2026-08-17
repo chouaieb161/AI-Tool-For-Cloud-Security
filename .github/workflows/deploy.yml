@@ -6,11 +6,14 @@ on:
   workflow_dispatch:
 
 env:
-  ACR_NAME: ${{ secrets.ACR_NAME }}
-  IMAGE_NAME: ai-tool-for-cloud-security-backend
-  CONTAINER_APP_NAME: ai-security-api
+  ACR_NAME: aisecurityacr1
+  BACKEND_IMAGE: ai-tool-for-cloud-security-backend
+  FRONTEND_IMAGE: ai-tool-for-cloud-security-frontend
+  BACKEND_APP: ai-security-api
+  FRONTEND_APP: ai-security-web
   RESOURCE_GROUP: rg-ai-security
-  CONTAINER_APP_ENV: cae-ai-security
+  CONTAINER_APP_ENV: managedEnvironment-rgaisecurity-a3fb
+  BACKEND_URL: https://ai-security-api.livelyrock-5656839c.spaincentral.azurecontainerapps.io
 
 jobs:
   backend:
@@ -33,18 +36,18 @@ jobs:
       - name: Build and push backend image
         run: |
           docker build -f backend/Dockerfile \
-            -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest \
+            -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:latest \
             --build-arg HF_TOKEN=${{ secrets.HF_TOKEN }} .
-          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:latest
 
       - name: Deploy backend to Container Apps
         uses: azure/container-apps-deploy@v1
         with:
           appSourcePath: .
           acrName: ${{ env.ACR_NAME }}
-          imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:latest
           resourceGroup: ${{ env.RESOURCE_GROUP }}
-          containerAppName: ${{ env.CONTAINER_APP_NAME }}
+          containerAppName: ${{ env.BACKEND_APP }}
           containerAppEnvironment: ${{ env.CONTAINER_APP_ENV }}
           targetPort: 8000
           minReplicas: 0
@@ -68,13 +71,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy to Azure Static Web Apps
-        uses: Azure/static-web-apps-deploy@v1
+      - name: Log in to Azure
+        uses: azure/login@v2
         with:
-          azure_static_web_apps_api_token: ${{ secrets.AZURE_STATIC_WEB_APPS_API_TOKEN }}
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          action: "upload"
-          app_location: "frontend"
-          app_build_command: "npm ci && echo \"VITE_API_URL=https://${{ env.CONTAINER_APP_NAME }}.azurecontainerapps.io\" >> .env.production && npm run build"
-          api_location: ""
-          output_location: "dist"
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Log in to Azure Container Registry
+        uses: azure/docker-login@v2
+        with:
+          login-server: ${{ env.ACR_NAME }}.azurecr.io
+          username: ${{ secrets.ACR_USERNAME }}
+          password: ${{ secrets.ACR_PASSWORD }}
+
+      - name: Build and push frontend image
+        run: |
+          docker build -f frontend/Dockerfile \
+            --build-arg VITE_API_URL=${{ env.BACKEND_URL }} \
+            -t ${{ env.ACR_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:latest .
+          docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:latest
+
+      - name: Deploy frontend to Container Apps
+        uses: azure/container-apps-deploy@v1
+        with:
+          appSourcePath: .
+          acrName: ${{ env.ACR_NAME }}
+          imageToDeploy: ${{ env.ACR_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:latest
+          resourceGroup: ${{ env.RESOURCE_GROUP }}
+          containerAppName: ${{ env.FRONTEND_APP }}
+          containerAppEnvironment: ${{ env.CONTAINER_APP_ENV }}
+          targetPort: 80
+          minReplicas: 0
+          maxReplicas: 1
+          ingress: external
