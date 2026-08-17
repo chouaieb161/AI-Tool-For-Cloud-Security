@@ -52,17 +52,6 @@ jobs:
           containerAppEnvironment: ${{ env.CONTAINER_APP_ENV }}
           targetPort: 8000
           ingress: external
-          environmentVariables: |
-            GCP_AGENT_RUNNER=real
-            CHROMA_CIS_PATH=/data/chroma_cis
-            CIS_EMBED_DEVICE=cpu
-            CIS_ENABLE_RERANK=0
-            GROQ_API_KEY=${{ secrets.GROQ_API_KEY }}
-            GCP_AUDIT_SCOPE=${{ secrets.GCP_AUDIT_SCOPE }}
-            OCI_SUPABASE_URL=${{ secrets.OCI_SUPABASE_URL }}
-            OCI_SUPABASE_KEY=${{ secrets.OCI_SUPABASE_KEY }}
-            OCI_VECTOR_STORE=${{ secrets.OCI_VECTOR_STORE }}
-            DATABASE_URL=${{ secrets.DATABASE_URL }}
 
   frontend:
     runs-on: ubuntu-latest
