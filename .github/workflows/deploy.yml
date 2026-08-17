@@ -41,7 +41,7 @@ jobs:
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.BACKEND_IMAGE }}:latest
 
       - name: Deploy backend to Container Apps
-        uses: azure/container-apps-deploy@v1
+        uses: azure/container-apps-deploy-action@v1
         with:
           appSourcePath: .
           acrName: ${{ env.ACR_NAME }}
@@ -91,7 +91,7 @@ jobs:
           docker push ${{ env.ACR_NAME }}.azurecr.io/${{ env.FRONTEND_IMAGE }}:latest
 
       - name: Deploy frontend to Container Apps
-        uses: azure/container-apps-deploy@v1
+        uses: azure/container-apps-deploy-action@v1
         with:
           appSourcePath: .
           acrName: ${{ env.ACR_NAME }}
