@@ -21,12 +21,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Pre-download the embedding model so cold starts don't fetch it from HuggingFace
 RUN HF_TOKEN=${HF_TOKEN} python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('BAAI/bge-large-en-v1.5', device='cpu')"
 
-# Copy the FastAPI app and CIS OCI rules
+# Copy the FastAPI app and CIS rules
 COPY backend/app ./app
 COPY backend/cis_oci.jsonl ./cis_oci.jsonl
+COPY cis_parsed.jsonl ./cis_parsed.jsonl
 
-# Prebuilt GCP CIS Chroma vector store
-COPY .chroma_cis /data/chroma_cis
+# Build the GCP CIS Chroma vector store from the parsed CIS benchmark (tracked)
+# so the image is self-contained without committing the binary store.
+RUN python -c "import json; from app.rag.vector_store import index_records; recs=[json.loads(l) for l in open('cis_parsed.jsonl', encoding='utf-8') if l.strip()]; n=index_records(recs, persist_directory='/data/chroma_cis', reset=True); print(f'indexed {n} CIS controls')"
 
 # Volume mount point for runtime-persisted vector store
 ENV CHROMA_CIS_PATH=/data/chroma_cis
